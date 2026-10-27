@@ -1,0 +1,17 @@
+node_modules/
+dist/
+.data/
+.env
+.env.*
+!.env.example
+*.sqlite*
+*.log
+.DS_Store
+coverage/
+private/
+*.docx
+*.pptx
+*.pdf
+*.xlsx
+*.pem
+*.key

@@ -1,0 +1,9 @@
+# Asset permissions
+
+`web/public/paywella-logo.png` is the PayWella brand lockup supplied by the project owner and used with permission. The monochrome treatment preserves its original proportions and transparent background.
+
+Interface icons are supplied by Lucide under the ISC licence. Their licence is included in the installed package.
+
+Manrope is distributed under the SIL Open Font License. The font licence is included at `web/public/fonts/LICENSE.txt`.
+
+Noto Sans is used for currency glyph coverage. It is distributed under the SIL Open Font License, included at `web/public/fonts/LICENSE-NOTO.txt`.
