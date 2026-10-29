@@ -14,6 +14,8 @@ import { receiptImage } from "./receipt-image.ts";
 import { verifyWhatsApp } from "./whatsapp.ts";
 import { banks, products } from "./providers/sandbox.ts";
 import { statementPdf } from "./statements.ts";
+import { messageControl, whatsappCopy } from "./whatsapp-ui.ts";
+import { recordDelivery, deliveryStatuses } from "./whatsapp-delivery.ts";
 
 type Session = {
   owner: string;
@@ -147,6 +149,37 @@ export function createApp(core: Core, agent: Agent, env: NodeJS.ProcessEnv) {
               value?.metadata?.phone_number_id !== env.WHATSAPP_PHONE_NUMBER_ID
             )
               continue;
+            for (const status of value.statuses || []) {
+              if (
+                typeof status.id !== "string" ||
+                !status.id ||
+                status.id.length > 200 ||
+                !deliveryStatuses.includes(status.status) ||
+                !/^234\d{10}$/.test(status.recipient_id || "")
+              )
+                continue;
+              const owner = (
+                await core.db.query("SELECT id FROM users WHERE phone=$1", [
+                  status.recipient_id,
+                ])
+              ).rows[0]?.id;
+              if (!owner) continue;
+              const code =
+                status.status === "failed"
+                  ? status.errors?.[0]?.code
+                  : undefined;
+              await core.db.transaction((q) =>
+                recordDelivery(
+                  q,
+                  owner,
+                  status.id,
+                  status.status,
+                  Number.isSafeInteger(code) && code > 0
+                    ? { providerCode: code }
+                    : {},
+                ),
+              );
+            }
             for (const message of value.messages || []) {
               if (
                 !/^234\d{10}$/.test(message.from) ||
@@ -165,7 +198,11 @@ export function createApp(core: Core, agent: Agent, env: NodeJS.ProcessEnv) {
                 /^\d{1,40}$/.test(message[message.type]?.id || "")
                   ? { id: message[message.type].id, type: message.type }
                   : null;
-              const selection = message.interactive?.list_reply?.id,
+              const control = messageControl(message);
+              const selection =
+                  message.type === "interactive"
+                    ? message.interactive?.list_reply?.id
+                    : null,
                 language =
                   typeof selection === "string" &&
                   /^lang:(en|pcm|yo|ig|ha)$/.test(selection)
@@ -181,7 +218,7 @@ export function createApp(core: Core, agent: Agent, env: NodeJS.ProcessEnv) {
                   [id, owner, "inbound", null, stamp()],
                 );
                 if (!inserted.count) return;
-                if (text || media || language)
+                if (text || media || language || control)
                   await core.enqueue(q, id, "agent", owner, {
                     sealed: agent.seal({
                       text,
@@ -189,13 +226,15 @@ export function createApp(core: Core, agent: Agent, env: NodeJS.ProcessEnv) {
                       access: text.trim().toLowerCase() === "open account",
                       ...(media ? { media } : {}),
                       ...(language ? { language } : {}),
+                      ...(control ? { control } : {}),
                     }),
                   });
                 else
                   await core.enqueue(q, "out:" + id, "outbox", owner, {
                     sealed: agent.seal({
                       to: message.from,
-                      text: "Please send a text request, a voice note or a clear picture of payment details or an Ajo ledger.",
+                      text: whatsappCopy((await core.getUser(owner)).language)
+                        .unsupported,
                     }),
                   });
               });

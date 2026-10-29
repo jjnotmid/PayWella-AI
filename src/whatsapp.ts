@@ -1,5 +1,38 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { AppError } from "./contracts.ts";
+export class WhatsAppDeliveryError extends AppError {
+  outcome: "retry" | "blocked" | "failed" | "unknown";
+  constructor(outcome: WhatsAppDeliveryError["outcome"], code: string) {
+    super(code, 503);
+    this.outcome = outcome;
+  }
+}
+async function acknowledgement(response: Response): Promise<string> {
+  if (!response.ok) {
+    let code: number | undefined;
+    try {
+      code = (await response.json()).error?.code;
+    } catch {}
+    if (
+      response.status === 429 ||
+      [4, 17, 32, 613, 130429, 131056].includes(code || 0)
+    )
+      throw new WhatsAppDeliveryError("retry", "WHATSAPP_RATE_LIMIT");
+    if (
+      [401, 403].includes(response.status) ||
+      [10, 190, 200].includes(code || 0)
+    )
+      throw new WhatsAppDeliveryError("blocked", "WHATSAPP_ACCESS_REJECTED");
+    if (response.status >= 400 && response.status < 500)
+      throw new WhatsAppDeliveryError("failed", "WHATSAPP_MESSAGE_REJECTED");
+    throw new WhatsAppDeliveryError("unknown", "WHATSAPP_SEND_UNCONFIRMED");
+  }
+  const data = await response.json();
+  const id = data.messages?.[0]?.id;
+  if (typeof id !== "string" || !id || id.length > 200)
+    throw new WhatsAppDeliveryError("unknown", "WHATSAPP_SEND_UNCONFIRMED");
+  return id;
+}
 export function verifyWhatsApp(
   body: Buffer,
   signature: string,
@@ -41,7 +74,9 @@ export async function sendWhatsApp(
   interactive?: Record<string, unknown>,
 ) {
   if (!env.WHATSAPP_ACCESS_TOKEN || !env.WHATSAPP_PHONE_NUMBER_ID)
-    throw new AppError("WHATSAPP_NOT_CONFIGURED", 503);
+    throw new WhatsAppDeliveryError("blocked", "WHATSAPP_NOT_CONFIGURED");
+  if (!interactive && text.length > 4000)
+    throw new WhatsAppDeliveryError("failed", "WHATSAPP_MESSAGE_TOO_LONG");
   const response = await fetcher(
     `https://graph.facebook.com/${env.WHATSAPP_GRAPH_VERSION || "v24.0"}/${env.WHATSAPP_PHONE_NUMBER_ID}/messages`,
     {
@@ -58,21 +93,22 @@ export async function sendWhatsApp(
           ? { type: "interactive", interactive }
           : {
               type: "text",
-              text: { body: text.slice(0, 4000), preview_url: false },
+              text: { body: text, preview_url: false },
             }),
       }),
     },
   );
-  if (!response.ok) throw new AppError("WHATSAPP_SEND_UNCONFIRMED", 503);
+  return acknowledgement(response);
 }
 export async function sendWhatsAppReceipt(
   env: NodeJS.ProcessEnv,
   to: string,
   image: Buffer,
   fetcher: typeof fetch = fetch,
+  caption = "Your task completed successfully. Your PayWella receipt is attached.",
 ) {
   if (!env.WHATSAPP_ACCESS_TOKEN || !env.WHATSAPP_PHONE_NUMBER_ID)
-    throw new AppError("WHATSAPP_NOT_CONFIGURED", 503);
+    throw new WhatsAppDeliveryError("blocked", "WHATSAPP_NOT_CONFIGURED");
   const base = `https://graph.facebook.com/${env.WHATSAPP_GRAPH_VERSION || "v24.0"}/${env.WHATSAPP_PHONE_NUMBER_ID}`,
     headers = { authorization: "Bearer " + env.WHATSAPP_ACCESS_TOKEN },
     file = new FormData();
@@ -83,16 +119,34 @@ export async function sendWhatsAppReceipt(
     new Blob([new Uint8Array(image)], { type: "image/png" }),
     "PayWella-receipt.png",
   );
-  const upload = await fetcher(base + "/media", {
-    method: "POST",
-    headers,
-    body: file,
-    signal: AbortSignal.timeout(15000),
-  });
-  if (!upload.ok) throw new AppError("RECEIPT_UPLOAD_FAILED", 503);
-  const media = await upload.json();
+  let upload: Response;
+  try {
+    upload = await fetcher(base + "/media", {
+      method: "POST",
+      headers,
+      body: file,
+      signal: AbortSignal.timeout(15000),
+    });
+  } catch {
+    throw new WhatsAppDeliveryError("retry", "RECEIPT_UPLOAD_FAILED");
+  }
+  if (!upload.ok)
+    throw new WhatsAppDeliveryError(
+      [401, 403].includes(upload.status)
+        ? "blocked"
+        : upload.status === 429 || upload.status >= 500
+          ? "retry"
+          : "failed",
+      "RECEIPT_UPLOAD_FAILED",
+    );
+  let media: any;
+  try {
+    media = await upload.json();
+  } catch {
+    throw new WhatsAppDeliveryError("retry", "RECEIPT_UPLOAD_FAILED");
+  }
   if (!/^\d+$/.test(media.id || ""))
-    throw new AppError("RECEIPT_UPLOAD_FAILED", 503);
+    throw new WhatsAppDeliveryError("retry", "RECEIPT_UPLOAD_FAILED");
   const result = await fetcher(base + "/messages", {
     method: "POST",
     headers: { ...headers, "content-type": "application/json" },
@@ -103,10 +157,9 @@ export async function sendWhatsAppReceipt(
       type: "image",
       image: {
         id: media.id,
-        caption:
-          "Your task completed successfully. Your PayWella receipt is attached.",
+        caption,
       },
     }),
   });
-  if (!result.ok) throw new AppError("RECEIPT_SEND_UNCONFIRMED", 503);
+  return acknowledgement(result);
 }

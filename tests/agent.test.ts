@@ -6,6 +6,104 @@ import { Agent } from "../src/ai/agent.ts";
 import { connectTools } from "../src/ai/mcp.ts";
 import { createModel } from "../src/ai/model.ts";
 import type { Model } from "../src/ai/model.ts";
+test("independent MCP reads overlap while a later beneficiary read waits for its preceding mutation", async () => {
+  const db = await openStore({ file: ":memory:" }),
+    core = new Core(db);
+  let release = () => {},
+    waiting = false,
+    overlap = false,
+    saved = false,
+    round = 0;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const timeout = setTimeout(release, 2000);
+  try {
+    const owner = await core.userForPhone("2348000000001");
+    await core.setup(owner, "Ada Example", "1234");
+    const funding = core.fundingDetails.bind(core),
+      transaction = db.transaction.bind(db),
+      save = core.saveBeneficiary.bind(core),
+      records = core.records.bind(core);
+    core.fundingDetails = async (id) => {
+      waiting = true;
+      await gate;
+      waiting = false;
+      return funding(id);
+    };
+    db.transaction = async (fn) => {
+      if (waiting) {
+        overlap = true;
+        release();
+      }
+      return transaction(fn);
+    };
+    core.saveBeneficiary = async (...args) => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      const value = await save(...args);
+      saved = true;
+      return value;
+    };
+    core.records = async (id, kind) => {
+      if (kind === "beneficiary") assert.equal(saved, true);
+      return records(id, kind);
+    };
+    const model: Model = {
+      provider: "offline-ordering-fixture",
+      async complete(messages) {
+        if (round++ === 0)
+          return {
+            text: "",
+            calls: [
+              { id: "fund", name: "get_account_details", arguments: {} },
+              { id: "balance", name: "get_balance", arguments: {} },
+            ],
+          };
+        if (round === 2) {
+          assert.equal(messages.at(-2)!.name, "get_account_details");
+          assert.equal(messages.at(-1)!.name, "get_balance");
+          return {
+            text: "",
+            calls: [
+              {
+                id: "save",
+                name: "save_beneficiary",
+                arguments: {
+                  bankCode: "opay",
+                  accountNumber: "0123456789",
+                  alias: "Mum",
+                },
+              },
+              { id: "list", name: "list_beneficiaries", arguments: {} },
+            ],
+          };
+        }
+        assert.match(messages.at(-1)!.content, /Mum/);
+        return {
+          text: "The recipient is saved. No payment was made.",
+          calls: [],
+        };
+      },
+    };
+    const agent = new Agent(
+      core,
+      model,
+      "offline-isolated-concurrent-read-secret",
+    );
+    const result = await agent.turn(
+      owner,
+      "Read my balance and funding details, then save this recipient as Mum.",
+    );
+    assert.equal(overlap, true);
+    assert.equal(saved, true);
+    assert.match(result.text, /No payment/);
+    assert.equal((await core.getUser(owner)).ready, true);
+  } finally {
+    release();
+    clearTimeout(timeout);
+    await db.close();
+  }
+});
 test("MCP only exposes owned reads and preparation, with no execution tool or approval capability", async () => {
   const db = await openStore({ file: ":memory:" }),
     core = new Core(db);

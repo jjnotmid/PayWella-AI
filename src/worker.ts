@@ -1,15 +1,30 @@
 import type { Core } from "./core.ts";
 import type { Agent } from "./ai/agent.ts";
-import { AppError } from "./contracts.ts";
+import { AppError, naira } from "./contracts.ts";
+import { balance, available } from "./ledger.ts";
 import type { PreparationProgress } from "./contracts.ts";
 import { createCapability, stamp, future } from "./security.ts";
 import { errorCopy } from "./copy.ts";
-import { sendWhatsApp, sendWhatsAppReceipt, showTyping } from "./whatsapp.ts";
+import {
+  sendWhatsApp,
+  sendWhatsAppReceipt,
+  showTyping,
+  WhatsAppDeliveryError,
+} from "./whatsapp.ts";
+import { recordDelivery } from "./whatsapp-delivery.ts";
+import type { Row } from "./db.ts";
 import { receiptImage } from "./receipt-image.ts";
 import { randomUUID } from "node:crypto";
 import { createMediaReader, downloadWhatsAppMedia } from "./ai/media.ts";
 import { languages, introduction } from "./languages.ts";
 import { locateLedgerPage, cropLedgerPage } from "./ai/segmentation.ts";
+import {
+  serviceMenu,
+  languageMenu,
+  privateAction,
+  planMessage,
+  whatsappCopy,
+} from "./whatsapp-ui.ts";
 export class Worker {
   core: Core;
   agent: Agent;
@@ -40,6 +55,7 @@ export class Worker {
       ["agent:2", () => this.turn()],
       ["outbox", () => this.outbound()],
       ["receipts", () => this.receipt()],
+      ["welcome", () => this.welcome()],
     ];
     for (const [name, run] of lanes)
       if (!this.active.has(name)) {
@@ -256,6 +272,57 @@ export class Worker {
             } as Record<string, string>
           )[input.language],
         };
+      } else if (input.control) {
+        const c = whatsappCopy(user.language);
+        if (input.control === "menu")
+          reply = { text: c.menu, interactive: serviceMenu(user.language) };
+        else if (input.control === "settings")
+          reply = {
+            text: c.settingsBody,
+            interactive: languageMenu(user.language),
+          };
+        else if (input.control === "balance") {
+          const funds = await this.core.db.transaction(async (q) => ({
+            total: await balance(q, "wallet:" + job.owner),
+            available: await available(q, "wallet:" + job.owner),
+          }));
+          const held = funds.total - funds.available;
+          reply = {
+            text: `${c.balance}: ${naira(funds.available)}${held ? "\n" + c.held + ": " + naira(held) : ""}`,
+          };
+        } else if (input.control === "funding") {
+          const details = await this.core.fundingDetails(job.owner);
+          reply = {
+            text: `${c.funding}\n${details.name}\n${details.bankName}\n${details.accountNumber}\n\n${c.testBank}`,
+          };
+        } else if (input.control === "bank" || input.control === "p2p")
+          reply = { text: c.prompts[input.control === "bank" ? 0 : 1] };
+        else if (input.control === "bills") reply = { text: c.help[2] };
+        else {
+          const view = ["savings", "ajo", "history", "account"].includes(
+            input.control,
+          )
+            ? input.control === "account"
+              ? "settings"
+              : input.control
+            : "home";
+          const cap = await createCapability(
+            this.core.db,
+            job.owner,
+            "workspace",
+          );
+          reply = {
+            text:
+              input.control === "savings"
+                ? c.help[0]
+                : input.control === "ajo"
+                  ? c.help[1]
+                  : input.control === "history"
+                    ? c.help[3]
+                    : c.settingsBody,
+            url: this.env.PUBLIC_ORIGIN + "/open?view=" + view + "#" + cap,
+          };
+        }
       } else if (input.access) {
         const cap = await createCapability(
           this.core.db,
@@ -297,18 +364,23 @@ export class Worker {
           );
         if (reply.prepared) {
           const p = reply.prepared.plan;
-          reply.text =
-            "Review these tasks together. No money has moved.\n" +
-            p.spec
-              .map(
-                (t: any, i: number) =>
-                  `${i + 1}. ${t.label}: NGN ${(t.amountKobo / 100).toFixed(2)}${t.destination ? " to " + t.destination : ""}`,
-              )
-              .join("\n");
+          reply.text = planMessage(p, user.language);
           reply.url =
             this.env.PUBLIC_ORIGIN + "/open#" + reply.prepared.capability;
           delete reply.prepared.capability;
         }
+      }
+      if (reply.url && !reply.interactive) {
+        const c = whatsappCopy(input.language || user.language);
+        reply.interactive = privateAction(
+          reply.text,
+          reply.url,
+          !user.ready
+            ? c.open
+            : reply.prepared?.plan.status === "READY"
+              ? c.review
+              : c.private,
+        );
       }
       await this.core.db.transaction(async (q) => {
         await this.core.put(q, job.id, job.owner, "reply", {
@@ -354,58 +426,118 @@ export class Worker {
     const job = await this.core.claim("outbox");
     if (!job) return;
     // A reclaimed send may already have reached WhatsApp. Do not send it twice.
-    if (job.attempts > 0) {
+    if (job.attempts > 0 && !job.payload.retryAllowed) {
       await this.core.db.query("UPDATE jobs SET status='UNKNOWN' WHERE id=$1", [
         job.id,
       ]);
       return;
     }
     try {
+      await this.core.db.query("UPDATE jobs SET payload=$1 WHERE id=$2", [
+        JSON.stringify({ ...job.payload, retryAllowed: false }),
+        job.id,
+      ]);
       const input = this.agent.open(job.payload.sealed);
-      await sendWhatsApp(
+      const messageId = await sendWhatsApp(
         this.env,
         input.to,
         input.text,
         this.fetcher,
         input.interactive,
       );
-      await this.core.db.query("UPDATE jobs SET status='DONE' WHERE id=$1", [
-        job.id,
-      ]);
-    } catch {
-      await this.core.db.query(
-        "UPDATE jobs SET status='UNKNOWN',lease_until=$1 WHERE id=$2",
-        [future(30000), job.id],
-      );
+      await this.acceptedDelivery(job, messageId);
+    } catch (error) {
+      await this.failedDelivery(job, error);
     }
+  }
+  async acceptedDelivery(job: Row, messageId: string) {
+    await this.core.db.transaction(async (q) => {
+      await recordDelivery(q, job.owner, messageId, "accepted", {
+        jobId: job.id,
+      });
+      await q.query(
+        "UPDATE jobs SET status='DONE',lease_until=NULL WHERE id=$1",
+        [job.id],
+      );
+    });
+  }
+  async failedDelivery(job: Row, error: unknown) {
+    const outcome =
+      error instanceof WhatsAppDeliveryError ? error.outcome : "unknown";
+    const retry = outcome === "retry" && job.attempts < 4;
+    const status = retry
+      ? "QUEUED"
+      : outcome === "blocked"
+        ? "BLOCKED"
+        : outcome === "failed" || outcome === "retry"
+          ? "FAILED"
+          : "UNKNOWN";
+    await this.core.db.query(
+      "UPDATE jobs SET status=$1,lease_until=$2,payload=$3 WHERE id=$4",
+      [
+        status,
+        retry ? future(Math.min(300000, 5000 * 2 ** job.attempts)) : null,
+        JSON.stringify({
+          ...job.payload,
+          retryAllowed: retry,
+          failureCode:
+            error instanceof WhatsAppDeliveryError
+              ? error.code
+              : "WHATSAPP_SEND_UNCONFIRMED",
+        }),
+        job.id,
+      ],
+    );
+  }
+  async welcome() {
+    if (!this.env.WHATSAPP_ACCESS_TOKEN || !this.env.WHATSAPP_PHONE_NUMBER_ID)
+      return;
+    const job = await this.core.claim("welcome");
+    if (!job) return;
+    const user = await this.core.getUser(job.owner),
+      details = await this.core.fundingDetails(job.owner),
+      c = whatsappCopy(user.language);
+    const text = `${c.welcome}\n\n${details.name}\n${details.bankName}\n${details.accountNumber}\n\n${c.testBank}\n\n${c.menu}`;
+    const interactive = serviceMenu(user.language);
+    interactive.body.text = text;
+    await this.core.db.transaction(async (q) => {
+      await this.core.enqueue(q, "out:" + job.id, "outbox", job.owner, {
+        sealed: this.agent.seal({ to: user.phone, text, interactive }),
+      });
+      await q.query(
+        "UPDATE jobs SET status='DONE',lease_until=NULL WHERE id=$1",
+        [job.id],
+      );
+    });
   }
   async receipt() {
     if (!this.env.WHATSAPP_ACCESS_TOKEN || !this.env.WHATSAPP_PHONE_NUMBER_ID)
       return;
     const job = await this.core.claim("receipt");
     if (!job) return;
-    if (job.attempts > 0) {
+    if (job.attempts > 0 && !job.payload.retryAllowed) {
       await this.core.db.query("UPDATE jobs SET status='UNKNOWN' WHERE id=$1", [
         job.id,
       ]);
       return;
     }
     try {
+      await this.core.db.query("UPDATE jobs SET payload=$1 WHERE id=$2", [
+        JSON.stringify({ ...job.payload, retryAllowed: false }),
+        job.id,
+      ]);
       const user = await this.core.getUser(job.owner),
         receipt = await this.core.receipt(job.owner, job.payload.receiptId);
-      await sendWhatsAppReceipt(
+      const messageId = await sendWhatsAppReceipt(
         this.env,
         user.phone,
         receiptImage(receipt),
         this.fetcher,
+        whatsappCopy(user.language).receipt,
       );
-      await this.core.db.query("UPDATE jobs SET status='DONE' WHERE id=$1", [
-        job.id,
-      ]);
-    } catch {
-      await this.core.db.query("UPDATE jobs SET status='UNKNOWN' WHERE id=$1", [
-        job.id,
-      ]);
+      await this.acceptedDelivery(job, messageId);
+    } catch (error) {
+      await this.failedDelivery(job, error);
     }
   }
 }

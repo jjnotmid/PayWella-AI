@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import pg from "pg";
 import { openStore } from "../src/db.ts";
 import { Core } from "../src/core.ts";
+import { recordDelivery } from "../src/whatsapp-delivery.ts";
 
 const source = process.env.PG_TEST_URL;
 if (!source)
@@ -142,8 +143,19 @@ try {
     collection.fundedKobo + collection.cashOutstandingKobo,
   );
   assert.equal((await core.records(owner, "contribution")).length, 1);
+  await Promise.all(
+    (["accepted", "read", "sent", "delivered"] as const).map((status) =>
+      db!.transaction((q) =>
+        recordDelivery(q, owner, "wamid.postgres-race", status),
+      ),
+    ),
+  );
+  assert.equal(
+    (await core.records(owner, "whatsapp_delivery"))[0].status,
+    "read",
+  );
   process.stdout.write(
-    "PostgreSQL checks passed: concurrent approval, parallel settlement, revisions, statements, Ajo allocation races, RLS and immutable ledger.\n",
+    "PostgreSQL checks passed: concurrent approval, parallel settlement, revisions, statements, Ajo allocation and delivery-status races, RLS and immutable ledger.\n",
   );
 } finally {
   await db?.close();

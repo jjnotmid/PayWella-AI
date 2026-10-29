@@ -115,8 +115,14 @@ function App() {
   }, [theme]);
   useEffect(() => {
     let mounted = true;
-    if (new URLSearchParams(window.location.search).get("view") === "ajo")
-      setPage("ajo");
+    const requestedView = new URLSearchParams(window.location.search).get(
+      "view",
+    );
+    if (
+      requestedView &&
+      ["home", "savings", "ajo", "history", "settings"].includes(requestedView)
+    )
+      setPage(requestedView);
     const hadFragment = !!window.location.hash.slice(1);
     (async () => {
       void api("config")

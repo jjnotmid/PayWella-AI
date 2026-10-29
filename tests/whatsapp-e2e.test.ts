@@ -64,7 +64,9 @@ test("signed WhatsApp voice note → one editable private review → one approva
         assert.equal(message.status, "read");
         assert.equal(message.typing_indicator.type, "text");
       }
-      return Response.json({ messages: [{ id: "offline-response" }] });
+      return Response.json({
+        messages: [{ id: "offline-response-" + sent.length }],
+      });
     }
     throw Error("Unexpected outbound request");
   };
@@ -168,10 +170,13 @@ test("signed WhatsApp voice note → one editable private review → one approva
     await worker.outbound();
     assert.equal(mediaCalls, 1);
     assert.equal(modelCalls, 1);
-    assert.match(sent[0].text.body, /0123456789/);
-    assert.match(sent[0].text.body, /Laptop/);
-    assert.match(sent[0].text.body, /No money has moved/);
-    const link = sent[0].text.body.split("\n").at(-1),
+    const body = sent[0].interactive?.body.text || sent[0].text.body;
+    assert.match(body, /0123456789/);
+    assert.match(body, /Laptop/);
+    assert.match(body, /No money has moved/);
+    const link =
+        sent[0].interactive?.action.parameters.url ||
+        sent[0].text.body.split("\n").at(-1),
       exchange = await post("exchange", { token: new URL(link).hash.slice(1) }),
       cookie = exchange.headers.get("set-cookie")!;
     const target = (await exchange.json()).target;

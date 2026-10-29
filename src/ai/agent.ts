@@ -191,7 +191,7 @@ export class Agent {
           reply = response.text;
           break;
         }
-        for (const call of response.calls) {
+        const run = async (call: (typeof response.calls)[number]) => {
           await progress({
             stage: "checking",
             detail:
@@ -205,12 +205,31 @@ export class Agent {
           });
           trace.tools.push(call.name);
           const value = await tools.call(call.name, call.arguments);
-          messages.push({
+          return {
             role: "tool",
             content: JSON.stringify(value),
             name: call.name,
             callId: call.id,
-          });
+          } as ModelMessage;
+        };
+        // Independent reads can overlap; every mutation retains the model's order.
+        for (let position = 0; position < response.calls.length; ) {
+          let end = position + 1;
+          if (tools.readOnlyTools.has(response.calls[position].name))
+            while (
+              end < response.calls.length &&
+              tools.readOnlyTools.has(response.calls[end].name)
+            )
+              end++;
+          const results = await Promise.allSettled(
+            response.calls.slice(position, end).map(run),
+          );
+          for (const result of results) {
+            if (result.status === "rejected")
+              throw new AppError("AI_UNAVAILABLE", 503);
+            messages.push(result.value);
+          }
+          position = end;
         }
         if (prepared) break;
       }

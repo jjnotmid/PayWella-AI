@@ -12,6 +12,19 @@ import type { PreparationProgress } from "../contracts.ts";
 import { available } from "../ledger.ts";
 import type { ToolSpec } from "./model.ts";
 const empty = z.object({}).strict();
+const readOnlyTools = new Set([
+  "get_balance",
+  "get_account_details",
+  "list_beneficiaries",
+  "list_goals",
+  "list_services",
+  "get_history",
+  "get_ajo_books",
+  "get_product_help",
+  "get_plan_status",
+  "get_active_plans",
+  "get_statement_summary",
+]);
 export async function connectTools(
   core: Core,
   owner: string,
@@ -209,6 +222,13 @@ export async function connectTools(
         ],
         boundary:
           "Financial rails are simulated in this test environment. No crypto, cards, foreign accounts, loans or investments are connected. One PIN authorizes a reviewed plan; speech cannot approve it.",
+        channels: {
+          whatsappText: true,
+          whatsappVoiceNotes: true,
+          whatsappPictures: true,
+          whatsappLiveCalling: false,
+          privateWebApproval: true,
+        },
       }),
     },
     {
@@ -314,19 +334,7 @@ export async function connectTools(
       ...t,
       inputSchema: { ...t.inputSchema, type: "object" },
       annotations: {
-        readOnlyHint: [
-          "get_balance",
-          "get_account_details",
-          "list_beneficiaries",
-          "list_goals",
-          "list_services",
-          "get_history",
-          "get_ajo_books",
-          "get_product_help",
-          "get_plan_status",
-          "get_active_plans",
-          "get_statement_summary",
-        ].includes(t.name),
+        readOnlyHint: readOnlyTools.has(t.name),
         destructiveHint: false,
       },
     })),
@@ -362,6 +370,7 @@ export async function connectTools(
   await Promise.all([server.connect(left), client.connect(right)]);
   return {
     specs,
+    readOnlyTools: readOnlyTools as ReadonlySet<string>,
     client,
     async call(name: string, args: unknown) {
       const result = await client.callTool({

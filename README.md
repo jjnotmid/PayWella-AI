@@ -7,9 +7,11 @@ Node.js 24, TypeScript, React and PostgreSQL. Local development uses SQLite; hos
 ## What works
 
 - WhatsApp text, voice-note and payment-image ingestion through a signed, deduplicated inbox.
+- Direct account-opening buttons, a localized account-ready message with full test funding details, one service list, private settings links and current available/reserved balance controls. These controls do not reset an unfinished conversation or consume a model call; free-form requests still use the model and MCP.
 - A contextual agent using actual MCP tool discovery and calls. It can read owned balances, goals, recipients, activity, settings and Ajo records, then prepare up to five tasks together.
 - Bank and PayWella transfers, airtime, data, prepaid electricity, savings creation/deposit/withdrawal, and individual Ajo cash/funding/payout records using sandbox financial adapters.
 - An editable private review, one four-digit PIN approval, aggregate balance reservations, bounded parallel workers and durable pending-payment reconciliation.
+- WhatsApp reviews include each amount, full bank recipient, fees and expiry. Independent read-only MCP calls overlap; mutations and dependent operations preserve their required order.
 - Handwritten-ledger candidates with explicit member matching and human review. Recording collected cash creates an organizer liability, never a bank-funded balance.
 - Ajo contributions cover the oldest unpaid dates, including partial days and advance days within the agreed cycle. Reviews and receipts preserve the exact allocation; replacing collected cash does not count those days twice.
 - Automatic grouped receipts, recipient copies of internal payments, PNG/PDF receipts, PDF statements and saved bank recipients.
@@ -59,6 +61,10 @@ Hosted organizer access is an operator action: after an account is opened, `npm 
 Private plans expire after five minutes. One four-digit PIN approval covers the reviewed revision. The model can read and prepare through MCP; it has no payment-execution tool.
 
 An accepted request is not a completed payment. Provider uncertainty retains the reservation and reconciles the existing reference. Independent tasks can complete separately; receipts describe settled tasks only. Editing invalidates the earlier review. Notifications run independently and cannot turn a settled task into a PIN error.
+
+WhatsApp API acceptance is recorded separately from sent, delivered, read and failed webhook statuses. Signed status callbacks cannot move funds, create customer accounts or roll a read confirmation back to sent. Confirmed rate-limit rejections and receipt-upload failures use bounded backoff; an ambiguous message-send outcome is not automatically repeated. A notification job marked done means Meta acknowledged submission, not proof that a handset received it. Receipts remain available privately even when notification delivery is blocked or unconfirmed.
+
+WhatsApp service, settings, account-opening and review copy is provided in English, Pidgin, Yoruba, Igbo and Hausa. Native-speaker review and full web-copy localization remain release checks. Oversized interactive reviews fall back to a complete text review with its private link instead of silently truncating the authorization URL.
 
 An Ajo cycle has an agreed first date, payout date and member-specific daily amount, bounded to one year in this release. Amounts beyond the remaining cycle are rejected rather than becoming undisclosed fees or an automatic new cycle. Concurrent contributions that change a reviewed date allocation require a fresh review. Older member records without dated contribution evidence remain blocked from new dated collections until their history is reconciled; existing funded balances are not rewritten. Cycle fee agreements and recurring savings schedules remain outside the implemented journeys.
 

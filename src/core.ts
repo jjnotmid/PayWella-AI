@@ -94,6 +94,7 @@ export class Core {
         { account: "system:seed", amount: -50_000_000 },
         { account: `wallet:${owner}`, amount: 50_000_000 },
       ]);
+      await this.enqueue(q, "welcome:" + owner, "welcome", owner, {});
     });
     return this.workspace(owner);
   }
@@ -371,7 +372,7 @@ export class Core {
         [cutoff],
       );
       await q.query(
-        "UPDATE jobs SET payload='{}' WHERE status IN ('DONE','FAILED','UNKNOWN') AND created_at<$1",
+        "UPDATE jobs SET payload='{}' WHERE status IN ('DONE','FAILED','UNKNOWN','BLOCKED') AND created_at<$1",
         [cutoff],
       );
       await q.query("DELETE FROM capabilities WHERE expires_at<$1", [cutoff]);
