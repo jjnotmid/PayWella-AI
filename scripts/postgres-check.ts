@@ -4,6 +4,7 @@ import pg from "pg";
 import { openStore } from "../src/db.ts";
 import { Core } from "../src/core.ts";
 import { recordDelivery } from "../src/whatsapp-delivery.ts";
+import { connectTools } from "../src/ai/mcp.ts";
 
 const source = process.env.PG_TEST_URL;
 if (!source)
@@ -154,6 +155,22 @@ try {
     (await core.records(owner, "whatsapp_delivery"))[0].status,
     "read",
   );
+  const tools = await connectTools(core, owner, () => {});
+  try {
+    const workspace = await core.workspace(owner);
+    const affordability = await tools.call("check_affordability", {
+      priceKobo: 100,
+    });
+    assert.equal(affordability.availableKobo, workspace.availableKobo);
+    const notification = await tools.call("get_notification_status", {
+      receiptId: workspace.receipts[0].id,
+    });
+    assert.equal(notification.paymentStatus, "SETTLED");
+    assert.equal(notification.notifications.length, 1);
+    assert.equal(notification.notifications[0].deliveryStatus, "unconfirmed");
+  } finally {
+    await tools.close();
+  }
   process.stdout.write(
     "PostgreSQL checks passed: concurrent approval, parallel settlement, revisions, statements, Ajo allocation and delivery-status races, RLS and immutable ledger.\n",
   );

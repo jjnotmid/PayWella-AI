@@ -12,6 +12,7 @@ Node.js 24, TypeScript, React and PostgreSQL. Local development uses SQLite; hos
 - Bank and PayWella transfers, airtime, data, prepaid electricity, savings creation/deposit/withdrawal, and individual Ajo cash/funding/payout records using sandbox financial adapters.
 - An editable private review, one four-digit PIN approval, aggregate balance reservations, bounded parallel workers and durable pending-payment reconciliation.
 - WhatsApp reviews include each amount, full bank recipient, fees and expiry. Independent read-only MCP calls overlap; mutations and dependent operations preserve their required order.
+- Grounded purchase-affordability arithmetic uses fresh available funds and a customer-specified buffer. Receipt-support tools distinguish settled payments from WhatsApp notification acceptance or confirmed delivery, without exposing another customer's records.
 - Handwritten-ledger candidates with explicit member matching and human review. Recording collected cash creates an organizer liability, never a bank-funded balance.
 - Ajo contributions cover the oldest unpaid dates, including partial days and advance days within the agreed cycle. Reviews and receipts preserve the exact allocation; replacing collected cash does not count those days twice.
 - Automatic grouped receipts, recipient copies of internal payments, PNG/PDF receipts, PDF statements and saved bank recipients.

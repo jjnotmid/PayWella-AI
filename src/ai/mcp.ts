@@ -24,6 +24,8 @@ const readOnlyTools = new Set([
   "get_plan_status",
   "get_active_plans",
   "get_statement_summary",
+  "check_affordability",
+  "get_notification_status",
 ]);
 export async function connectTools(
   core: Core,
@@ -35,6 +37,91 @@ export async function connectTools(
 ) {
   await core.getUser(owner);
   const registry = [
+    {
+      name: "check_affordability",
+      description:
+        "Calculate whether this customer's currently available spending balance covers a supplied purchase price while keeping an explicitly requested cash buffer. Prices and buffer are integer kobo. Ask for an unknown price; do not guess one. This excludes held funds and separate savings, moves no money and is not a payment quote.",
+      schema: z
+        .object({
+          priceKobo: z.number().int().min(100).max(100000000),
+          keepAvailableKobo: z.number().int().min(0).max(100000000).default(0),
+        })
+        .strict(),
+      run: async (args: { priceKobo: number; keepAvailableKobo: number }) => {
+        const availableKobo = await core.db.transaction((q) =>
+          available(q, "wallet:" + owner),
+        );
+        const requiredKobo = args.priceKobo + args.keepAvailableKobo;
+        return {
+          availableKobo,
+          priceKobo: args.priceKobo,
+          keepAvailableKobo: args.keepAvailableKobo,
+          canAfford: availableKobo >= requiredKobo,
+          remainingAfterPurchaseKobo: availableKobo - args.priceKobo,
+          shortfallKobo: Math.max(0, requiredKobo - availableKobo),
+          source: "sandbox_ledger",
+          fundsReserved: false,
+          paymentAuthorized: false,
+        };
+      },
+    },
+    {
+      name: "get_notification_status",
+      description:
+        "Check the owner's WhatsApp reply or receipt notification status. A submitted notification is not proof of delivery, and delivery failure is not payment failure. Optionally inspect one owned receipt. Do not retry a financial task because its notification is unconfirmed; the receipt stays in private activity.",
+      schema: z.object({ receiptId: z.string().uuid().optional() }).strict(),
+      run: async (args: { receiptId?: string }) => {
+        const receipt = args.receiptId
+          ? await core.receipt(owner, args.receiptId)
+          : null;
+        const jobs = await core.db.query(
+          "SELECT id,kind,status,created_at FROM jobs WHERE owner=$1 AND kind IN ('receipt','outbox')" +
+            (receipt ? " AND id IN ($2,$3)" : "") +
+            " ORDER BY created_at DESC LIMIT 10",
+          receipt
+            ? [
+                owner,
+                "receipt:" + receipt.taskId,
+                "incoming-receipt:" + receipt.taskId,
+              ]
+            : [owner],
+        );
+        const jobField = core.db.postgres
+          ? "data::jsonb->>'jobId'"
+          : "json_extract(data,'$.jobId')";
+        const deliveries = jobs.rows.length
+          ? (
+              await core.db.query(
+                "SELECT data FROM records WHERE owner=$1 AND kind='whatsapp_delivery' AND " +
+                  jobField +
+                  " IN (" +
+                  jobs.rows.map((_job, index) => "$" + (index + 2)).join(",") +
+                  ")",
+                [owner, ...jobs.rows.map((job) => job.id)],
+              )
+            ).rows.map((row) => JSON.parse(row.data))
+          : [];
+        return {
+          ...(receipt
+            ? {
+                receiptId: receipt.id,
+                paymentStatus: receipt.status,
+                privateReceiptAvailable: true,
+              }
+            : {}),
+          notifications: jobs.rows.map((job) => ({
+            type: job.kind === "receipt" ? "receipt" : "reply",
+            processingStatus: job.status,
+            deliveryStatus:
+              deliveries.find((row) => row.jobId === job.id)?.status ||
+              "unconfirmed",
+            createdAt: job.created_at,
+          })),
+          notice:
+            "Only delivered or read confirms handset delivery. A failed or unconfirmed notification does not reverse or repeat a payment.",
+        };
+      },
+    },
     {
       name: "get_balance",
       description:
@@ -219,6 +306,8 @@ export async function connectTools(
           "reviewed notebook imports for organizers",
           "PDF statements and saved recipients",
           "reply language preferences",
+          "available-balance affordability checks",
+          "receipt delivery checks",
         ],
         boundary:
           "Financial rails are simulated in this test environment. No crypto, cards, foreign accounts, loans or investments are connected. One PIN authorizes a reviewed plan; speech cannot approve it.",
