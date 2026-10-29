@@ -6,12 +6,14 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { Core } from "./core.ts";
 import type { Agent } from "./ai/agent.ts";
-import { AppError } from "./contracts.ts";
+import { AppError, PlanInput } from "./contracts.ts";
 import { digest, future, stamp, token } from "./security.ts";
 import { errorCopy } from "./copy.ts";
 import { receiptPdf } from "./receipts.ts";
 import { receiptImage } from "./receipt-image.ts";
 import { verifyWhatsApp } from "./whatsapp.ts";
+import { banks, products } from "./providers/sandbox.ts";
+import { statementPdf } from "./statements.ts";
 
 type Session = {
   owner: string;
@@ -106,6 +108,13 @@ export function createApp(core: Core, agent: Agent, env: NodeJS.ProcessEnv) {
           ),
         });
       }
+      if (method === "GET" && path === "/api/config")
+        return json(res, {
+          whatsappNumber: /^\d{8,15}$/.test(env.WHATSAPP_PUBLIC_NUMBER || "")
+            ? env.WHATSAPP_PUBLIC_NUMBER
+            : null,
+          financialMode: "sandbox",
+        });
       if (path === "/webhooks/whatsapp") {
         if (method === "GET") {
           if (
@@ -150,32 +159,43 @@ export function createApp(core: Core, agent: Agent, env: NodeJS.ProcessEnv) {
               const text =
                 message.type === "text"
                   ? String(message.text?.body || "").slice(0, 2000)
-                  : "";
+                  : String(message.image?.caption || "").slice(0, 500);
+              const media =
+                ["audio", "image"].includes(message.type) &&
+                /^\d{1,40}$/.test(message[message.type]?.id || "")
+                  ? { id: message[message.type].id, type: message.type }
+                  : null;
+              const selection = message.interactive?.list_reply?.id,
+                language =
+                  typeof selection === "string" &&
+                  /^lang:(en|pcm|yo|ig|ha)$/.test(selection)
+                    ? selection.slice(5)
+                    : null;
               await core.db.transaction(async (q) => {
                 const old = (
                   await q.query("SELECT id FROM events WHERE id=$1", [id])
                 ).rows[0];
                 if (old) return;
-                await q.query("INSERT INTO events VALUES($1,$2,$3,$4,$5)", [
-                  id,
-                  owner,
-                  "inbound",
-                  null,
-                  stamp(),
-                ]);
-                if (text)
+                const inserted = await q.query(
+                  "INSERT INTO events VALUES($1,$2,$3,$4,$5) ON CONFLICT(id) DO NOTHING",
+                  [id, owner, "inbound", null, stamp()],
+                );
+                if (!inserted.count) return;
+                if (text || media || language)
                   await core.enqueue(q, id, "agent", owner, {
                     sealed: agent.seal({
                       text,
                       channel: "whatsapp",
                       access: text.trim().toLowerCase() === "open account",
+                      ...(media ? { media } : {}),
+                      ...(language ? { language } : {}),
                     }),
                   });
                 else
                   await core.enqueue(q, "out:" + id, "outbox", owner, {
                     sealed: agent.seal({
                       to: message.from,
-                      text: "Please send your request as text for now. Voice and image connections are not ready in this environment yet.",
+                      text: "Please send a text request, a voice note or a clear picture of payment details or an Ajo ledger.",
                     }),
                   });
               });
@@ -269,7 +289,7 @@ export function createApp(core: Core, agent: Agent, env: NodeJS.ProcessEnv) {
             .strict()
             .refine((v) => v.pin === v.confirmation)
             .parse(data);
-          await core.setup(s.owner, input.name, input.pin);
+          const opened = await core.setup(s.owner, input.name, input.pin);
           const secret = token();
           await core.db.transaction(async (q) => {
             await q.query(
@@ -280,6 +300,16 @@ export function createApp(core: Core, agent: Agent, env: NodeJS.ProcessEnv) {
               "INSERT INTO sessions VALUES($1,$2,$3,NULL,NULL,$4)",
               [digest(secret), s.owner, "workspace", future(1800000)],
             );
+            if (env.WHATSAPP_ACCESS_TOKEN && env.WHATSAPP_PHONE_NUMBER_ID) {
+              const user = opened.user,
+                funding = opened.funding;
+              await core.enqueue(q, "welcome:" + s.owner, "outbox", s.owner, {
+                sealed: agent.seal({
+                  to: user.phone,
+                  text: `Congratulations, ${user.name.split(" ")[0]}. Your account is ready.\n${funding.bankName}\nAccount: ${funding.accountNumber}\nYour opening test balance is NGN 500,000.\nThese are test details. Do not send real money.\nWhat would you like to do next?`,
+                }),
+              });
+            }
           });
           cookie(res, secret);
           return json(res, await core.workspace(s.owner));
@@ -288,19 +318,104 @@ export function createApp(core: Core, agent: Agent, env: NodeJS.ProcessEnv) {
           workspace(s);
           return json(res, await core.workspace(s.owner));
         }
+        if (method === "GET" && path === "/api/statement.pdf") {
+          workspace(s);
+          const value = await core.statement(
+            s.owner,
+            z.string().date().parse(url.searchParams.get("start")),
+            z.string().date().parse(url.searchParams.get("end")),
+          );
+          res.writeHead(200, {
+            "content-type": "application/pdf",
+            "content-disposition":
+              'attachment; filename="PayWella-statement.pdf"',
+          });
+          res.end(await statementPdf(value));
+          return;
+        }
+        if (path === "/api/beneficiaries") {
+          workspace(s);
+          if (method === "GET")
+            return json(res, await core.records(s.owner, "beneficiary"));
+          if (method === "POST") {
+            const input = z
+              .object({
+                bankCode: z.string().max(20),
+                accountNumber: z.string().regex(/^\d{10}$/),
+              })
+              .strict()
+              .parse(data);
+            return json(
+              res,
+              await core.saveBeneficiary(
+                s.owner,
+                input.bankCode,
+                input.accountNumber,
+              ),
+              201,
+            );
+          }
+        }
+        if (method === "POST" && path === "/api/settings") {
+          workspace(s);
+          const input = z
+            .object({ language: z.enum(["en", "pcm", "yo", "ig", "ha"]) })
+            .strict()
+            .parse(data);
+          await core.db.query("UPDATE users SET language=$1 WHERE id=$2", [
+            input.language,
+            s.owner,
+          ]);
+          return json(res, { language: input.language });
+        }
         if (method === "POST" && path === "/api/plans") {
           workspace(s);
           const result = await core.prepare(s.owner, data);
           return json(res, { plan: result.plan }, 201);
         }
         const planMatch = path.match(
-          /^\/api\/plans\/([a-f0-9-]{36})(?:\/(approve|cancel))?$/,
+          /^\/api\/plans\/([a-f0-9-]{36})(?:\/(approve|cancel|edit))?$/,
         );
         if (planMatch) {
           const id = uuid.parse(planMatch[1]);
           planAccess(s, id);
           if (method === "GET" && !planMatch[2])
-            return json(res, await core.plan(s.owner, id));
+            return json(res, {
+              ...(await core.plan(s.owner, id)),
+              catalogue: { banks, products },
+            });
+          if (method === "POST" && planMatch[2] === "edit") {
+            const input = z
+              .object({
+                revision: z.number().int().positive(),
+                tasks: PlanInput.shape.tasks,
+              })
+              .strict()
+              .parse(data);
+            if (s.purpose === "review" && s.revision !== input.revision)
+              throw new AppError("REVIEW_CHANGED", 409);
+            const result = await core.prepare(
+              s.owner,
+              { tasks: input.tasks },
+              null,
+              { id, revision: input.revision },
+            );
+            if (s.purpose === "review") {
+              const secret = (req.headers.cookie || "")
+                .split(";")
+                .map((v) => v.trim())
+                .find((v) => v.startsWith("pw_session="))!
+                .slice(11);
+              await core.db.query(
+                "UPDATE sessions SET revision=$1 WHERE hash=$2",
+                [result.plan.revision, digest(secret)],
+              );
+            }
+            return json(res, {
+              ...result.plan,
+              catalogue: { banks, products },
+            });
+          }
           if (method === "POST" && planMatch[2] === "approve") {
             const input = z
               .object({
@@ -323,6 +438,30 @@ export function createApp(core: Core, agent: Agent, env: NodeJS.ProcessEnv) {
         const receiptMatch = path.match(
           /^\/api\/receipts\/([a-f0-9-]{36})(\.(?:pdf|png))?$/,
         );
+        const saveRecipient = path.match(
+          /^\/api\/receipts\/([a-f0-9-]{36})\/save-recipient$/,
+        );
+        if (method === "POST" && saveRecipient) {
+          const receipt = await core.receipt(
+            s.owner,
+            uuid.parse(saveRecipient[1]),
+          );
+          planAccess(s, receipt.planId);
+          const input = z
+            .object({ alias: z.string().trim().max(60).optional() })
+            .strict()
+            .parse(data);
+          if (!receipt.recipient) throw new AppError("RECIPIENT_NOT_AVAILABLE");
+          return json(
+            res,
+            await core.saveBeneficiary(
+              s.owner,
+              receipt.recipient.bankCode,
+              receipt.recipient.accountNumber,
+              input.alias,
+            ),
+          );
+        }
         if (method === "GET" && receiptMatch) {
           const receipt = await core.receipt(
             s.owner,
@@ -381,7 +520,31 @@ export function createApp(core: Core, agent: Agent, env: NodeJS.ProcessEnv) {
             requestId.parse(path.slice("/api/assistant/".length));
           const rows = await core.records(s.owner, "reply"),
             reply = rows.find((r) => r.id === id);
-          return json(res, reply || { pending: true });
+          if (!reply) {
+            const job = (
+              await core.db.query(
+                "SELECT id,created_at FROM jobs WHERE id=$1 AND owner=$2",
+                [id, s.owner],
+              )
+            ).rows[0];
+            if (!job) throw new AppError("NOT_FOUND", 404);
+            if (job.created_at < future(-86400000))
+              throw new AppError("REQUEST_EXPIRED", 410);
+          }
+          const progress = (await core.records(s.owner, "progress")).find(
+            (row) => row.id === id + ":progress",
+          );
+          return json(
+            res,
+            reply
+              ? agent.open(reply.sealed)
+              : {
+                  pending: true,
+                  ...(progress
+                    ? { progress: agent.open(progress.sealed) }
+                    : {}),
+                },
+          );
         }
         if (method === "POST" && path === "/api/ajo/books") {
           workspace(s);

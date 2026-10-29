@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Resvg } from "@resvg/resvg-js";
 import { naira, AppError } from "./contracts.ts";
 import type { Row } from "./db.ts";
@@ -15,16 +16,21 @@ const escape = (value: unknown) =>
         "'": "&apos;",
       })[c]!,
   );
-const logo = readFileSync(resolve("web/public/paywella-logo.png")).toString(
+const assets = fileURLToPath(new URL("../web/public/", import.meta.url));
+const logo = readFileSync(resolve(assets, "paywella-logo.png")).toString(
   "base64",
 );
 const fonts = [
   "Manrope-Regular.ttf",
   "Manrope-Semibold.ttf",
   "NotoSans-Regular.ttf",
-].map((file) => resolve("web/public/fonts", file));
+].map((file) => resolve(assets, "fonts", file));
 function wrap(value: unknown, limit: number) {
-  const words = String(value ?? "").split(/\s+/),
+  const words = String(value ?? "")
+      .split(/\s+/)
+      .flatMap(
+        (word) => word.match(new RegExp(".{1," + limit + "}", "gu")) || [],
+      ),
     lines: string[] = [];
   for (const word of words) {
     if (!lines.length || lines.at(-1)!.length + word.length + 1 > limit)
@@ -62,7 +68,7 @@ export function receiptImage(receipt: Row) {
     .map((line, i) => text(line, 85, 625 + i * 46, 30, 600))
     .join(
       "",
-    )}<path d="M85 790H995" stroke="#DFE5D7"/>${text("Date and time", 85, 845, 24, 400, "#657469")}${text(date, 85, 896, 29, 600)}${text("Fee", 85, 990, 25, 400, "#657469")}${text(naira(receipt.feeKobo), 995, 990, 29, 600, "#082F27", "end")}<path d="M85 1040H995" stroke="#DFE5D7" stroke-dasharray="10 12"/>${text("Reference", 85, 1100, 24, 400, "#657469")}${wrap(
+    )}${receipt.electricityToken ? text("Electricity token", 85, 710, 22, 400, "#657469") + text(String(receipt.electricityToken).replace(/(.{4})(?=.)/g, "$1 "), 85, 756, 30, 600) : ""}<path d="M85 790H995" stroke="#DFE5D7"/>${text("Date and time", 85, 845, 24, 400, "#657469")}${text(date, 85, 896, 29, 600)}${text("Fee", 85, 990, 25, 400, "#657469")}${text(naira(receipt.feeKobo), 995, 990, 29, 600, "#082F27", "end")}<path d="M85 1040H995" stroke="#DFE5D7" stroke-dasharray="10 12"/>${text("Reference", 85, 1100, 24, 400, "#657469")}${wrap(
     receipt.reference,
     49,
   )

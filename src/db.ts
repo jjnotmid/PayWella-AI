@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS accounts(id TEXT PRIMARY KEY,owner TEXT NOT NULL,kind
 CREATE TABLE IF NOT EXISTS journals(id TEXT PRIMARY KEY,reference TEXT UNIQUE NOT NULL,created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS postings(id TEXT PRIMARY KEY,journal TEXT NOT NULL REFERENCES journals(id),account TEXT NOT NULL REFERENCES accounts(id),amount BIGINT NOT NULL CHECK(amount<>0));
 CREATE INDEX IF NOT EXISTS posting_account ON postings(account);
+CREATE INDEX IF NOT EXISTS posting_journal ON postings(journal);
 CREATE TABLE IF NOT EXISTS records(id TEXT PRIMARY KEY,kind TEXT NOT NULL,owner TEXT NOT NULL,data TEXT NOT NULL,version INTEGER NOT NULL DEFAULT 1);
 CREATE INDEX IF NOT EXISTS record_owner ON records(owner,kind);
 CREATE TABLE IF NOT EXISTS plans(id TEXT PRIMARY KEY,owner TEXT NOT NULL,revision INTEGER NOT NULL,status TEXT NOT NULL,spec TEXT NOT NULL,digest TEXT NOT NULL,expires_at TEXT NOT NULL,created_at TEXT NOT NULL,request_key TEXT,UNIQUE(owner,request_key));
@@ -41,12 +42,20 @@ export async function openStore({
   if (production && !url)
     throw new Error("Production requires a separate PostgreSQL database");
   if (url) {
+    const connection = new URL(url);
+    if (production || ca)
+      for (const key of ["sslmode", "sslcert", "sslkey", "sslrootcert"])
+        connection.searchParams.delete(key);
     const pool = new pg.Pool({
-      connectionString: url,
+      connectionString: connection.toString(),
       max: 5,
-      ssl: ca
-        ? { ca: readFileSync(ca, "utf8"), rejectUnauthorized: true }
-        : undefined,
+      ssl:
+        production || ca
+          ? {
+              ...(ca ? { ca: readFileSync(ca, "utf8") } : {}),
+              rejectUnauthorized: true,
+            }
+          : undefined,
       connectionTimeoutMillis: 5000,
     });
     const wrap = (client: pg.Pool | pg.PoolClient): Query => ({
@@ -82,6 +91,30 @@ export async function openStore({
           throw new Error("This database belongs to a different application.");
       }
       await init.query(schema);
+      const ownTables = [
+        ...schema.matchAll(/CREATE TABLE IF NOT EXISTS (\w+)/g),
+      ].map((match) => match[1]);
+      for (const table of ownTables) {
+        await init.query(`ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY`);
+        await init.query(`REVOKE ALL ON TABLE ${table} FROM PUBLIC`);
+        for (const role of ["anon", "authenticated"])
+          await init.query(
+            `DO $$ BEGIN IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='${role}') THEN REVOKE ALL ON TABLE ${table} FROM ${role}; END IF; END $$`,
+          );
+      }
+      await init.query(
+        `CREATE OR REPLACE FUNCTION deny_ledger_change() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'Append-only ledger'; END $$`,
+      );
+      await init.query(
+        `CREATE OR REPLACE FUNCTION verify_journal_balance() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF (SELECT COALESCE(SUM(amount),0) FROM postings WHERE journal=NEW.journal)<>0 THEN RAISE EXCEPTION 'Unbalanced journal'; END IF; RETURN NULL; END $$`,
+      );
+      await init.query(
+        `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname='balanced_journal') THEN CREATE CONSTRAINT TRIGGER balanced_journal AFTER INSERT ON postings DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION verify_journal_balance(); END IF; END $$`,
+      );
+      for (const table of ["postings", "journals"])
+        await init.query(
+          `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname='immutable_${table}') THEN CREATE TRIGGER immutable_${table} BEFORE UPDATE OR DELETE ON ${table} FOR EACH ROW EXECUTE FUNCTION deny_ledger_change(); END IF; END $$`,
+        );
       await init.query("COMMIT");
       initialized = true;
     } catch (error) {
@@ -91,26 +124,29 @@ export async function openStore({
       init.release();
       if (!initialized) await pool.end();
     }
-    await query.query(
-      `CREATE OR REPLACE FUNCTION deny_ledger_change() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'Append-only ledger'; END $$`,
-    );
-    for (const table of ["postings", "journals"])
-      await query.query(
-        `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname='immutable_${table}') THEN CREATE TRIGGER immutable_${table} BEFORE UPDATE OR DELETE ON ${table} FOR EACH ROW EXECUTE FUNCTION deny_ledger_change(); END IF; END $$`,
-      );
     return {
       ...query,
       postgres: true,
       async transaction(fn) {
         const c = await pool.connect();
         try {
-          await c.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
-          const r = await fn(wrap(c));
-          await c.query("COMMIT");
-          return r;
-        } catch (e) {
-          await c.query("ROLLBACK");
-          throw e;
+          // Callbacks contain database work only. Retry serialization conflicts, never provider submissions.
+          for (let attempt = 0; ; attempt++) {
+            try {
+              await c.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
+              const result = await fn(wrap(c));
+              await c.query("COMMIT");
+              return result;
+            } catch (error) {
+              await c.query("ROLLBACK");
+              const code = (error as { code?: string }).code;
+              if (attempt >= 3 || !["40001", "40P01"].includes(code || ""))
+                throw error;
+              await new Promise((resolve) =>
+                setTimeout(resolve, 10 + attempt * 15),
+              );
+            }
+          }
         } finally {
           c.release();
         }

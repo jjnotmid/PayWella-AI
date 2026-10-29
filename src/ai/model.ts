@@ -58,7 +58,8 @@ export function createModel(
             },
             body: JSON.stringify({
               model: env.META_MODEL || "muse-spark-1.3",
-              max_completion_tokens: 1600,
+              reasoning_effort: "low",
+              max_completion_tokens: 4000,
               messages: messages.map((m) => ({
                 role: m.role,
                 content: m.content,

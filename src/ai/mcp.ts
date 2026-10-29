@@ -8,6 +8,8 @@ import {
 import { z } from "zod";
 import type { Core } from "../core.ts";
 import { PlanInput, AppError, naira } from "../contracts.ts";
+import type { PreparationProgress } from "../contracts.ts";
+import { available } from "../ledger.ts";
 import type { ToolSpec } from "./model.ts";
 const empty = z.object({}).strict();
 export async function connectTools(
@@ -16,6 +18,7 @@ export async function connectTools(
   onPrepared: (value: Awaited<ReturnType<Core["prepare"]>>) => void,
   requestKey: string | null = null,
   onClear: () => void = () => {},
+  progress: (value: PreparationProgress) => Promise<void> = async () => {},
 ) {
   await core.getUser(owner);
   const registry = [
@@ -25,12 +28,113 @@ export async function connectTools(
         "Read the authenticated customer’s current available Naira balance. Use before giving any owned balance or affordability figure.",
       schema: empty,
       run: async () => {
-        const w = await core.workspace(owner);
+        const availableKobo = await core.db.transaction((q) =>
+          available(q, "wallet:" + owner),
+        );
         return {
-          availableKobo: w.availableKobo,
-          display: naira(w.availableKobo),
+          availableKobo,
+          display: naira(availableKobo),
           source: "sandbox_ledger",
         };
+      },
+    },
+    {
+      name: "get_account_details",
+      description:
+        "Read this customer’s sandbox funding details. These are test identifiers, not a live bank account. Never invent a funding amount.",
+      schema: empty,
+      run: () => core.fundingDetails(owner),
+    },
+    {
+      name: "list_beneficiaries",
+      description:
+        "Read the owner’s saved bank recipients. Use only an unambiguous match; ask if several match.",
+      schema: empty,
+      run: async () => ({
+        beneficiaries: await core.records(owner, "beneficiary"),
+      }),
+    },
+    {
+      name: "save_beneficiary",
+      description:
+        "Save an explicitly requested bank recipient for this owner after name enquiry. This does not transfer money.",
+      schema: z
+        .object({
+          bankCode: z.string().max(20),
+          accountNumber: z.string().regex(/^\d{10}$/),
+          alias: z.string().trim().min(1).max(60).optional(),
+        })
+        .strict(),
+      run: (args: any) =>
+        core.saveBeneficiary(
+          owner,
+          args.bankCode,
+          args.accountNumber,
+          args.alias,
+        ),
+    },
+    {
+      name: "create_ajo_book",
+      description:
+        "Create an explicitly requested individual thrift collection book. Only an approved organizer can use this. No money moves.",
+      schema: z.object({ name: z.string().trim().min(1).max(60) }).strict(),
+      run: (args: any) => core.createBook(owner, args.name),
+    },
+    {
+      name: "join_ajo_book",
+      description:
+        "Join a book with the customer’s supplied invitation, chosen daily contribution and agreed payout date. Never choose those terms for them. No funds move.",
+      schema: z
+        .object({
+          invite: z.string().regex(/^[A-Za-z0-9]{8}$/),
+          dailyKobo: z.number().int().min(100).max(100000000),
+          maturityDate: z.string().date(),
+        })
+        .strict(),
+      run: (args: any) =>
+        core.joinBook(owner, args.invite, args.dailyKobo, args.maturityDate),
+    },
+    {
+      name: "add_ajo_member",
+      description:
+        "An approved organizer can add a cash member to an owned book, with the supplied name, individual daily contribution and agreed payout date. This records no collections and creates no funded balance.",
+      schema: z
+        .object({
+          bookId: z.string().uuid(),
+          name: z.string().min(2).max(100),
+          dailyKobo: z.number().int().min(100).max(100000000),
+          maturityDate: z.string().date(),
+        })
+        .strict(),
+      run: (args: any) =>
+        core.addMember(owner, args.bookId, {
+          name: args.name,
+          dailyKobo: args.dailyKobo,
+          maturityDate: args.maturityDate,
+        }),
+    },
+    {
+      name: "get_statement_summary",
+      description:
+        "Read this owner’s posted NGN statement for a customer-requested date range. Pending payments are not posted. The downloadable PDF is in the private web activity page.",
+      schema: z
+        .object({ start: z.string().date(), end: z.string().date() })
+        .strict(),
+      run: (args: any) => core.statement(owner, args.start, args.end),
+    },
+    {
+      name: "set_language",
+      description:
+        "Change the saved reply language only when the customer explicitly requests a preference change. Never infer consent for money from this. Supported: English, Pidgin, Yoruba, Igbo, Hausa.",
+      schema: z
+        .object({ language: z.enum(["en", "pcm", "yo", "ig", "ha"]) })
+        .strict(),
+      run: async (args: any) => {
+        await core.db.query("UPDATE users SET language=$1 WHERE id=$2", [
+          args.language,
+          owner,
+        ]);
+        return { language: args.language };
       },
     },
     {
@@ -66,7 +170,7 @@ export async function connectTools(
       schema: empty,
       run: async () => {
         const w = await core.workspace(owner);
-        return { books: w.books, members: w.members };
+        return { books: w.books, members: w.members, imports: w.imports };
       },
     },
     {
@@ -83,6 +187,10 @@ export async function connectTools(
           "electricity",
           "individual Ajo records",
           "private review and receipts",
+          "voice notes and Snap to Pay",
+          "reviewed notebook imports for organizers",
+          "PDF statements and saved recipients",
+          "reply language preferences",
         ],
         boundary:
           "Financial rails are simulated in this test environment. No crypto, cards, foreign accounts, loans or investments are connected. One PIN authorizes a reviewed plan; speech cannot approve it.",
@@ -94,7 +202,13 @@ export async function connectTools(
         "Prepare ALL requested tasks together, 1–5, for private review. No execution. Integer kobo: two thousand naira is 200000. Preserve amounts and recipients across clarifications. Ask only genuinely missing details. Never choose a bank from account digits alone.",
       schema: PlanInput,
       run: async (args: unknown) => {
-        const value = await core.prepare(owner, args, requestKey);
+        const value = await core.prepare(
+          owner,
+          args,
+          requestKey,
+          undefined,
+          progress,
+        );
         onPrepared(value);
         return {
           status: "AWAITING_APPROVAL",
@@ -107,6 +221,41 @@ export async function connectTools(
           paymentAuthorized: false,
         };
       },
+    },
+    {
+      name: "revise_plan",
+      description:
+        "Revise one owned unapproved plan when the customer changes its tasks. Include every task they still want. This invalidates the earlier review; it never executes payments.",
+      schema: PlanInput.extend({
+        id: z.string().uuid(),
+        revision: z.number().int().positive(),
+      }).strict(),
+      run: async (args: any) => {
+        const value = await core.prepare(owner, { tasks: args.tasks }, null, {
+          id: args.id,
+          revision: args.revision,
+        });
+        onPrepared(value);
+        return {
+          status: "AWAITING_APPROVAL",
+          planId: value.plan.id,
+          revision: value.plan.revision,
+          tasks: value.plan.spec.map((task) => ({
+            label: task.label,
+            destination: task.destination,
+            amountKobo: task.amountKobo,
+            feeKobo: task.feeKobo,
+          })),
+          paymentAuthorized: false,
+        };
+      },
+    },
+    {
+      name: "get_active_plans",
+      description:
+        "Read this owner’s active or recent plan IDs and authoritative statuses. Use to inspect or cancel the current request without guessing an ID.",
+      schema: empty,
+      run: async () => ({ plans: (await core.workspace(owner)).plans }),
     },
     {
       name: "clear_unfinished_request",
@@ -150,7 +299,19 @@ export async function connectTools(
       ...t,
       inputSchema: { ...t.inputSchema, type: "object" },
       annotations: {
-        readOnlyHint: !["prepare_plan", "cancel_plan"].includes(t.name),
+        readOnlyHint: [
+          "get_balance",
+          "get_account_details",
+          "list_beneficiaries",
+          "list_goals",
+          "list_services",
+          "get_history",
+          "get_ajo_books",
+          "get_product_help",
+          "get_plan_status",
+          "get_active_plans",
+          "get_statement_summary",
+        ].includes(t.name),
         destructiveHint: false,
       },
     })),

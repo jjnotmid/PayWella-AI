@@ -1,4 +1,28 @@
 export const errors: Record<string, string> = {
+  REQUEST_EXPIRED:
+    "This unfinished request is more than 24 hours old. Send a new request. Your completed transactions are unchanged.",
+  INVALID_METER_NUMBER:
+    "Check the meter number. It should contain 10 to 13 digits for this test electricity service.",
+  INVALID_STATEMENT_PERIOD:
+    "Choose a valid start and end date within one year.",
+  STATEMENT_TOO_LARGE:
+    "That statement has too many entries for one download. Choose a shorter period.",
+  AUDIO_TOO_LONG:
+    "That voice note is longer than 90 seconds. Send a shorter note so every instruction can be reviewed together.",
+  AUDIO_DECODER_UNAVAILABLE:
+    "Voice-note processing is not available on this server yet. Please send the request as text. No payment was approved.",
+  INVALID_COLLECTION_DATE:
+    "A cash collection cannot be recorded for a future date. Check the date and try again.",
+  IMPORT_ALREADY_RECORDED:
+    "This notebook row was already recorded. It has not been added twice.",
+  MEDIA_UNAVAILABLE:
+    "I could not load that voice note or picture. Please send it again. Your earlier request is still saved.",
+  MEDIA_UNREADABLE:
+    "I could not read that clearly. Send a clearer picture or repeat the missing details. No payment was approved.",
+  MEDIA_TOO_LARGE:
+    "That file is too large. Send a picture or voice note smaller than 8 MB.",
+  MEDIA_TYPE_UNSUPPORTED:
+    "Please send a JPEG, PNG or WebP picture, or a WhatsApp voice note.",
   ASSISTANT_BUSY:
     "Your current request is still being prepared. Wait for its result before clearing the conversation.",
   CONVERSATION_LIMIT:

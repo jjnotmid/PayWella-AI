@@ -1,6 +1,6 @@
 # Asset permissions
 
-`web/public/paywella-logo.png` is the PayWella brand lockup supplied by the project owner and used with permission. The monochrome treatment preserves its original proportions and transparent background.
+`web/public/paywella-logo.png` is the PayWella brand lockup supplied by the project owner and used with permission. The cream monochrome treatment in dark mode preserves its original proportions and transparent background.
 
 Interface icons are supplied by Lucide under the ISC licence. Their licence is included in the installed package.
 

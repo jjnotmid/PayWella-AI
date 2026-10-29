@@ -18,8 +18,8 @@
     BlinkMacSystemFont,
     "Segoe UI",
     sans-serif;
-  color: #183b30;
-  background: #fffaf3;
+  color: var(--ink);
+  background: var(--paper);
   font-synthesis: none;
   --paper: #fffaf3;
   --panel: #fffdf8;
@@ -152,12 +152,19 @@ svg {
   object-fit: contain;
 }
 :root[data-theme="dark"] .brand img {
-  filter: brightness(0) invert(1);
+  filter: url(#paywella-logo-cream);
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme]) .brand img {
-    filter: brightness(0) invert(1);
+    filter: url(#paywella-logo-cream);
   }
+}
+.brand-filters {
+  position: absolute;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+  overflow: hidden;
 }
 .brand > span {
   width: 5px;
@@ -976,6 +983,60 @@ input:disabled {
   background: var(--panel);
   margin-bottom: 12px;
 }
+.import-review {
+  padding: 25px;
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  background: var(--panel);
+  margin-bottom: 20px;
+}
+.import-review > header {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  margin-bottom: 22px;
+}
+.import-review > header > svg {
+  color: var(--gold);
+}
+.import-review p {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 8px;
+}
+.import-review fieldset {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  margin: 0 0 16px;
+  padding: 17px;
+}
+.import-review legend {
+  font-size: 13px;
+  font-weight: 600;
+  padding: 0 7px;
+}
+.import-select {
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 0;
+  font-size: 11px;
+  line-height: 1.6;
+}
+.import-select input {
+  width: 21px;
+  min-height: 21px;
+  height: 21px;
+  accent-color: var(--forest);
+  flex-shrink: 0;
+}
+.import-caution,
+.import-complete {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 15px;
+}
 .book-footer {
   display: flex;
   align-items: center;
@@ -1628,6 +1689,171 @@ input:disabled {
   .receipt-head h2 {
     font-size: 28px;
   }
+}
+.plan-editor {
+  display: grid;
+  gap: 20px;
+  padding: 20px 0;
+}
+.task-progress {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  margin-top: 22px;
+  padding: 20px 12px;
+  border-top: 1px solid var(--line);
+  text-align: center;
+}
+.task-progress > strong {
+  font-size: 12px;
+  line-height: 1.5;
+}
+.progress-brain {
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  background: var(--soft);
+  color: var(--ink);
+  border-radius: 18px;
+}
+.progress-trunk {
+  height: 18px;
+  width: 2px;
+  background: var(--line);
+}
+.progress-nodes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  width: 100%;
+}
+.progress-node {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--ink);
+  border-radius: 12px;
+  padding: 12px 10px;
+  font-size: 10px;
+  text-align: left;
+  min-width: 0;
+}
+.progress-node svg {
+  flex-shrink: 0;
+}
+.progress-node span {
+  overflow-wrap: anywhere;
+}
+.task-progress p,
+.task-progress small {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 10px;
+  margin: 0;
+}
+.progress-pulse {
+  display: flex;
+  gap: 6px;
+}
+.progress-pulse span {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--gold);
+  animation: progress-pulse 1.1s ease-in-out infinite;
+}
+.progress-pulse span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.progress-pulse span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+@keyframes progress-pulse {
+  50% {
+    opacity: 0.25;
+    transform: translateY(-3px);
+  }
+}
+.settings-panel,
+.statement-download {
+  display: grid;
+  gap: 20px;
+  padding: 26px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  border-radius: 22px;
+  margin-bottom: 22px;
+}
+.statement-download p {
+  color: var(--muted);
+  font-size: 13px;
+}
+.activity-group {
+  margin-bottom: 16px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  overflow: hidden;
+}
+.activity-group-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  padding: 15px 18px;
+  background: var(--panel);
+  border: 0;
+  color: var(--ink);
+  font-size: 11px;
+  gap: 10px;
+}
+.activity-group-heading > span:last-child {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.funding-number {
+  display: block;
+  font-size: 34px;
+  color: var(--ink);
+  margin: 20px 0 8px;
+  letter-spacing: 1px;
+}
+.save-recipient {
+  margin-top: 20px;
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+  color: var(--ink);
+  font-size: 13px;
+}
+.save-recipient summary {
+  cursor: pointer;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  font-weight: 600;
+}
+.save-recipient form {
+  display: grid;
+  gap: 15px;
+  margin-top: 12px;
+}
+.plan-editor fieldset {
+  display: grid;
+  gap: 15px;
+  margin: 0;
+  padding: 22px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  min-width: 0;
+}
+.plan-editor legend {
+  padding: 0 8px;
+  font-weight: 700;
 }
 @media (prefers-reduced-motion: reduce) {
   *,

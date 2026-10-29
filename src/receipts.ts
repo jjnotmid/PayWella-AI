@@ -1,5 +1,5 @@
 import PDFDocument from "pdfkit";
-import { resolve as filePath } from "node:path";
+import { fileURLToPath } from "node:url";
 import { naira } from "./contracts.ts";
 import type { Row } from "./db.ts";
 export function receiptPdf(receipt: Row): Promise<Buffer> {
@@ -10,9 +10,16 @@ export function receiptPdf(receipt: Row): Promise<Buffer> {
     doc.on("end", () => resolve(Buffer.concat(parts)));
     doc.on("error", reject);
     doc.rect(0, 0, 420, 595).fill("#FFFAF3");
-    doc.image(filePath("web/public/paywella-logo.png"), 32, 25, {
-      fit: [145, 55],
-    });
+    doc.image(
+      fileURLToPath(
+        new URL("../web/public/paywella-logo.png", import.meta.url),
+      ),
+      32,
+      25,
+      {
+        fit: [145, 55],
+      },
+    );
     doc.fillColor("#082F27").fontSize(10).text("PAYMENT RECEIPT", 32, 90);
     doc
       .fillColor("#082F27")
@@ -23,25 +30,44 @@ export function receiptPdf(receipt: Row): Promise<Buffer> {
       .text(naira(receipt.amountKobo).replace("₦", "NGN "), 32, 175);
     const rows = [
       ["Service", receipt.label],
-      ["To", receipt.destination || "Your savings"],
+      ...(receipt.recipient
+        ? [
+            ["Recipient", receipt.recipient.name],
+            ["Bank", receipt.recipient.bankName],
+            ["Account number", receipt.recipient.accountNumber],
+          ]
+        : [["To", receipt.destination || "Your savings"]]),
       ["Status", receipt.status],
       ["Fee", naira(receipt.feeKobo).replace("₦", "NGN ")],
       ["Date", new Date(receipt.createdAt).toUTCString()],
       ["Reference", receipt.reference],
+      ...(receipt.electricityToken
+        ? [["Electricity token", receipt.electricityToken]]
+        : []),
     ];
-    let y = 235;
+    let y = 225;
     for (const [label, value] of rows) {
+      doc.fontSize(10);
+      const height = Math.max(
+        26,
+        doc.heightOfString(String(value), { width: 245 }) + 12,
+      );
+      if (y + height > 525) {
+        doc.addPage();
+        doc.rect(0, 0, 420, 595).fill("#FFFAF3");
+        y = 40;
+      }
       doc.fillColor("#56635A").fontSize(9).text(label, 32, y);
       doc
         .fillColor("#082F27")
         .fontSize(10)
         .text(String(value), 130, y, { width: 245 });
-      y += label === "Reference" ? 44 : 34;
+      y += height;
     }
     doc
       .fillColor("#56635A")
       .fontSize(9)
-      .text("Test environment. No real bank payment was sent.", 32, 520, {
+      .text("Test environment. No real bank payment was sent.", 32, 550, {
         width: 350,
       });
     doc.end();

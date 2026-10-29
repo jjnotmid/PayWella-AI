@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { AppError } from "../contracts.ts";
 import type { Store } from "../db.ts";
+import type { Task } from "../contracts.ts";
 export const banks = [
   { code: "wema", name: "Wema Bank" },
   { code: "opay", name: "OPay" },
@@ -69,7 +70,11 @@ export type Outcome = {
 };
 export interface Rail {
   enquire(bank: string, number: string): Promise<string>;
-  submit(reference: string, kind: string): Promise<Outcome>;
+  validateService(
+    productId: string,
+    customer: string,
+  ): Promise<{ name?: string }>;
+  submit(reference: string, task: Task): Promise<Outcome>;
   lookup(reference: string): Promise<Outcome>;
 }
 export class SandboxRail implements Rail {
@@ -87,7 +92,23 @@ export class SandboxRail implements Rail {
       .digest()[0];
     return ["Ada Okafor", "Tunde Adeyemi", "Amina Bello", "Chidi Nwosu"][n % 4];
   }
-  async submit(reference: string, kind: string) {
+  async validateService(productId: string, customer: string) {
+    const product = products.find((row) => row.id === productId);
+    if (!product) throw new AppError("PRODUCT_QUOTE_CHANGED");
+    if (product.category === "electricity") {
+      if (!/^\d{10,13}$/.test(customer))
+        throw new AppError("INVALID_METER_NUMBER");
+      return {
+        name: ["Ada Example", "Tunde Example", "Amina Example"][
+          createHash("sha256").update(customer).digest()[0] % 3
+        ],
+      };
+    }
+    if (!/^0[789]\d{9}$/.test(customer))
+      throw new AppError("INVALID_CUSTOMER_NUMBER");
+    return {};
+  }
+  async submit(reference: string, task: Task) {
     this.submissions.add(reference);
     if (!this.outcomes.has(reference)) {
       const known = this.db
@@ -104,7 +125,7 @@ export class SandboxRail implements Rail {
           ? JSON.parse(known.data)
           : {
               status: "settled",
-              ...(kind === "service"
+              ...(task.kind === "service"
                 ? {
                     token: Array.from(
                       createHash("sha256")

@@ -1,7 +1,12 @@
 import { randomUUID, createHash } from "node:crypto";
 import type { Store, Query, Row } from "./db.ts";
 import { AppError, PlanInput, naira, safeInteger } from "./contracts.ts";
-import type { Task, QuotedTask, Plan } from "./contracts.ts";
+import type {
+  Task,
+  QuotedTask,
+  Plan,
+  PreparationProgress,
+} from "./contracts.ts";
 import { account, available, balance, lockAccount, post } from "./ledger.ts";
 import {
   stamp,
@@ -47,9 +52,11 @@ export class Core {
       if (!user) {
         user = { id: randomUUID() };
         await q.query(
-          "INSERT INTO users(id,phone,name,language,created_at) VALUES($1,$2,$3,$4,$5)",
+          "INSERT INTO users(id,phone,name,language,created_at) VALUES($1,$2,$3,$4,$5) ON CONFLICT(phone) DO NOTHING",
           [user.id, phone, "", "en", stamp()],
         );
+        user = (await q.query("SELECT id FROM users WHERE phone=$1", [phone]))
+          .rows[0];
       }
       return user.id as string;
     });
@@ -90,11 +97,18 @@ export class Core {
         "SELECT id,data,version FROM records WHERE owner=$1 AND kind=$2",
         [owner, kind],
       )
-    ).rows.map((row) => ({
-      id: row.id,
-      ...JSON.parse(row.data),
-      version: row.version,
-    }));
+    ).rows
+      .map((row) => ({
+        id: row.id,
+        ...JSON.parse(row.data),
+        version: row.version,
+      }))
+      .filter(
+        (row) =>
+          !["conversation", "reply", "media_result", "progress"].includes(
+            kind,
+          ) || row.updatedAt > future(-86400000),
+      );
   }
   async owned(q: Query, owner: string, id: string, kind: string) {
     const row = (
@@ -123,86 +137,307 @@ export class Core {
     return value;
   }
   async workspace(owner: string) {
-    const user = await this.getUser(owner);
-    const ownedMembers = await this.records(owner, "member"),
-      linked = (
-        await this.db.query(
-          "SELECT id,owner,data FROM records WHERE kind='member'",
-        )
-      ).rows
-        .filter((r) => JSON.parse(r.data).userId === owner && r.owner !== owner)
-        .map((r) => ({ id: r.id, organizer: r.owner, ...JSON.parse(r.data) }));
+    const memberOwner = this.db.postgres
+      ? "data::jsonb->>'userId'"
+      : "json_extract(data,'$.userId')";
+    const [
+      user,
+      goals,
+      members,
+      linked,
+      books,
+      receipts,
+      plans,
+      imports,
+      importRows,
+      balances,
+      beneficiaries,
+    ] = await Promise.all([
+      this.getUser(owner),
+      this.records(owner, "goal"),
+      this.records(owner, "member"),
+      this.db.query(
+        "SELECT id,owner,data FROM records WHERE kind='member' AND " +
+          memberOwner +
+          "=$1 AND owner<>$1",
+        [owner],
+      ),
+      this.records(owner, "book"),
+      this.records(owner, "receipt"),
+      this.db.query(
+        "SELECT id,status,created_at FROM plans WHERE owner=$1 ORDER BY created_at DESC LIMIT 20",
+        [owner],
+      ),
+      this.records(owner, "import"),
+      this.records(owner, "import_row"),
+      this.db.query(
+        "WITH l AS (SELECT account,SUM(amount) AS total FROM postings GROUP BY account),h AS (SELECT account,SUM(amount) AS total FROM holds WHERE active=1 GROUP BY account) SELECT a.id,COALESCE(l.total,0) AS balance,COALESCE(l.total,0)-COALESCE(h.total,0) AS available FROM accounts a LEFT JOIN l ON l.account=a.id LEFT JOIN h ON h.account=a.id WHERE a.owner=$1 OR a.id IN (SELECT 'ajo:' || id FROM records WHERE kind='member' AND " +
+          memberOwner +
+          "=$1)",
+        [owner],
+      ),
+      this.records(owner, "beneficiary"),
+    ]);
+    const totals = new Map(
+      balances.rows.map((row) => [
+        row.id,
+        {
+          balance: safeInteger(row.balance),
+          available: safeInteger(row.available),
+        },
+      ]),
+    );
+    const memberRows = [
+      ...members.map((row) => ({ ...row, organizer: owner })),
+      ...linked.rows.map((row) => ({
+        id: row.id,
+        organizer: row.owner,
+        ...JSON.parse(row.data),
+      })),
+    ];
     return {
       user,
-      balanceKobo: await balance(this.db, `wallet:${owner}`),
-      availableKobo: await available(this.db, `wallet:${owner}`),
-      goals: await Promise.all(
-        (await this.records(owner, "goal")).map(async (g) => ({
-          ...g,
-          balanceKobo: await balance(this.db, `goal:${g.id}`),
-        })),
-      ),
-      books: await this.records(owner, "book"),
-      members: await Promise.all(
-        [...ownedMembers, ...linked].map(async (m) => ({
-          ...m,
-          fundedKobo: await balance(this.db, `ajo:${m.id}`),
-        })),
-      ),
-      plans: (
-        await this.db.query(
-          "SELECT id,status,created_at FROM plans WHERE owner=$1 ORDER BY created_at DESC LIMIT 20",
-          [owner],
-        )
-      ).rows,
-      receipts: (await this.records(owner, "receipt")).sort((a, b) =>
-        b.createdAt.localeCompare(a.createdAt),
-      ),
+      beneficiaries,
+      funding: await this.fundingDetails(owner),
+      balanceKobo: totals.get("wallet:" + owner)?.balance || 0,
+      availableKobo: totals.get("wallet:" + owner)?.available || 0,
+      goals: goals.map((goal) => ({
+        ...goal,
+        balanceKobo: totals.get("goal:" + goal.id)?.balance || 0,
+      })),
+      books,
+      members: memberRows.map((member) => ({
+        ...member,
+        fundedKobo: totals.get("ajo:" + member.id)?.balance || 0,
+      })),
+      plans: plans.rows,
+      receipts: receipts.sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+      imports: imports.map((candidate) => ({
+        ...candidate,
+        rows: importRows.filter((row) => row.importId === candidate.id),
+      })),
       banks,
       products,
       sandbox: true,
     };
   }
+  async fundingDetails(owner: string) {
+    const user = await this.getUser(owner);
+    const bytes = createHash("sha256").update(owner).digest();
+    return {
+      name: user.name,
+      accountNumber:
+        "8" + [...bytes.subarray(0, 9)].map((value) => value % 10).join(""),
+      bankName: "PayWella sandbox bank",
+      currency: "NGN",
+      payable: false,
+    };
+  }
+  async statement(owner: string, start: string, end: string) {
+    const date = /^\d{4}-\d{2}-\d{2}$/;
+    if (
+      !date.test(start) ||
+      !date.test(end) ||
+      !Number.isFinite(Date.parse(start)) ||
+      !Number.isFinite(Date.parse(end)) ||
+      start > end ||
+      Date.parse(end) - Date.parse(start) > 366 * 86400000
+    )
+      throw new AppError("INVALID_STATEMENT_PERIOD");
+    if (
+      new Date(start).toISOString().slice(0, 10) !== start ||
+      new Date(end).toISOString().slice(0, 10) !== end
+    )
+      throw new AppError("INVALID_STATEMENT_PERIOD");
+    const from = new Date(start + "T00:00:00+01:00").toISOString(),
+      until = new Date(
+        Date.parse(end + "T00:00:00+01:00") + 86400000,
+      ).toISOString();
+    return this.db.transaction(async (q) => {
+      const user = (
+        await q.query("SELECT name,phone FROM users WHERE id=$1", [owner])
+      ).rows[0];
+      if (!user) throw new AppError("NOT_FOUND", 404);
+      const opening = safeInteger(
+        (
+          await q.query(
+            "SELECT COALESCE(SUM(p.amount),0) AS total FROM postings p JOIN journals j ON j.id=p.journal WHERE p.account=$1 AND j.created_at<$2",
+            ["wallet:" + owner, from],
+          )
+        ).rows[0].total,
+      );
+      const rows = (
+        await q.query(
+          "SELECT j.id,j.reference,j.created_at,SUM(p.amount) AS amount FROM postings p JOIN journals j ON j.id=p.journal WHERE p.account=$1 AND j.created_at>=$2 AND j.created_at<$3 GROUP BY j.id,j.reference,j.created_at ORDER BY j.created_at,j.id LIMIT 1001",
+          ["wallet:" + owner, from, until],
+        )
+      ).rows;
+      if (rows.length > 1000) throw new AppError("STATEMENT_TOO_LARGE");
+      const details = new Map<string, Row>(
+        (
+          await q.query(
+            "SELECT data FROM records WHERE owner=$1 AND kind='receipt'",
+            [owner],
+          )
+        ).rows.map((row) => {
+          const receipt = JSON.parse(row.data);
+          return [receipt.taskId, receipt];
+        }),
+      );
+      let running = opening;
+      const entries = rows.map((row) => {
+        const amount = safeInteger(row.amount);
+        running += amount;
+        return {
+          reference: row.reference,
+          date: row.created_at,
+          creditKobo: Math.max(0, amount),
+          debitKobo: Math.max(0, -amount),
+          balanceKobo: running,
+          status: "POSTED",
+          description: row.reference.startsWith("opening:")
+            ? "Opening test credit"
+            : details.has(row.reference)
+              ? details.get(row.reference)!.label +
+                " · " +
+                (details.get(row.reference)!.destination || "Your account")
+              : amount > 0
+                ? "Wallet credit"
+                : "Wallet debit",
+        };
+      });
+      return {
+        name: user.name,
+        start,
+        end,
+        openingKobo: opening,
+        closingKobo: running,
+        entries,
+        generatedAt: stamp(),
+        sandbox: true,
+      };
+    });
+  }
+  async saveBeneficiary(
+    owner: string,
+    bankCode: string,
+    accountNumber: string,
+    alias?: string,
+  ) {
+    const name = await this.rail.enquire(bankCode, accountNumber),
+      id = digest(owner + ":" + bankCode + ":" + accountNumber);
+    if (alias && alias.trim().length > 60) throw new AppError("INVALID_NAME");
+    const data = {
+      name,
+      bankCode,
+      accountNumber,
+      ...(alias?.trim() ? { alias: alias.trim() } : {}),
+      updatedAt: stamp(),
+    };
+    await this.db.query(
+      "INSERT INTO records(id,kind,owner,data) VALUES($1,'beneficiary',$2,$3) ON CONFLICT(id) DO UPDATE SET data=$3,version=records.version+1",
+      [id, owner, JSON.stringify(data)],
+    );
+    return { id, ...data };
+  }
   async onboardingLink(owner: string) {
-    return createCapability(this.db, owner, "setup");
+    return createCapability(
+      this.db,
+      owner,
+      (await this.getUser(owner)).ready ? "workspace" : "setup",
+    );
+  }
+  async cleanup() {
+    const cutoff = future(-86400000),
+      now = stamp(),
+      field = this.db.postgres
+        ? "data::jsonb->>'updatedAt'"
+        : "json_extract(data,'$.updatedAt')";
+    await this.db.transaction(async (q) => {
+      await q.query(
+        "DELETE FROM records WHERE kind IN ('conversation','reply','media_result','progress') AND " +
+          field +
+          "<$1",
+        [cutoff],
+      );
+      await q.query(
+        "UPDATE jobs SET payload='{}' WHERE status IN ('DONE','FAILED','UNKNOWN') AND created_at<$1",
+        [cutoff],
+      );
+      await q.query("DELETE FROM capabilities WHERE expires_at<$1", [cutoff]);
+      await q.query("DELETE FROM sessions WHERE expires_at<$1", [now]);
+      await q.query(
+        "UPDATE tasks SET status='CANCELLED' WHERE status='DRAFT' AND plan IN (SELECT id FROM plans WHERE status='READY' AND expires_at<=$1)",
+        [now],
+      );
+      await q.query(
+        "UPDATE plans SET status='EXPIRED' WHERE status='READY' AND expires_at<=$1",
+        [now],
+      );
+    });
   }
   async prepare(
     owner: string,
     input: unknown,
     requestKey: string | null = null,
+    edit?: { id: string; revision: number },
+    progress: (value: PreparationProgress) => Promise<void> = async () => {},
   ) {
-    if (requestKey) {
+    if (requestKey && !edit) {
       const existing = (
         await this.db.query(
           "SELECT id FROM plans WHERE owner=$1 AND request_key=$2",
           [owner, requestKey],
         )
       ).rows[0];
-      if (existing)
+      if (existing) {
+        const plan = await this.plan(owner, existing.id);
         return {
-          plan: await this.plan(owner, existing.id),
+          plan,
           capability: await createCapability(
             this.db,
             owner,
             "review",
             existing.id,
-            1,
+            plan.revision,
           ),
         };
+      }
     }
     const { tasks } = PlanInput.parse(input),
       user = await this.getUser(owner);
     if (!user.ready) throw new AppError("SETUP_REQUIRED");
-    const id = randomUUID(),
+    const id = edit?.id || randomUUID(),
       quoted: QuotedTask[] = [],
       goals = await this.records(owner, "goal");
     for (const task of tasks) {
+      await progress({
+        stage: "checking",
+        taskCount: tasks.length,
+        tasks: [
+          ...quoted.map((row) => ({
+            label: row.label,
+            status: "ready" as const,
+          })),
+          {
+            label: task.kind.startsWith("goal_")
+              ? "Savings task"
+              : task.kind.startsWith("ajo_")
+                ? "Ajo task"
+                : task.kind === "service"
+                  ? "Bill payment"
+                  : "Transfer",
+            status: "checking",
+          },
+        ],
+      });
       let label = "",
         destination = "",
         source: string | null = `wallet:${owner}`,
         target: string | null = "system:clearing",
         feeKobo = 0,
         goalId: string | undefined;
+      let recipient: QuotedTask["recipient"];
       const dependsOn: number[] = [];
       if (task.kind === "bank_transfer") {
         destination = await this.rail.enquire(
@@ -210,6 +445,12 @@ export class Core {
           task.accountNumber,
         );
         label = "Bank transfer";
+        recipient = {
+          name: destination,
+          bankCode: task.bankCode,
+          bankName: banks.find((bank) => bank.code === task.bankCode)!.name,
+          accountNumber: task.accountNumber,
+        };
         destination += ` · ${banks.find((b) => b.code === task.bankCode)?.name} · ${task.accountNumber}`;
       } else if (task.kind === "p2p") {
         const recipient = (
@@ -268,16 +509,34 @@ export class Core {
           !/^0[789]\d{9}$/.test(task.customer)
         )
           throw new AppError("INVALID_CUSTOMER_NUMBER");
+        const validation = await this.rail.validateService(
+          task.productId,
+          task.customer,
+        );
         label = product.name;
-        destination = task.customer;
+        destination =
+          (validation.name ? validation.name + " · " : "") + task.customer;
       } else {
         const member = await this.membership(this.db, owner, task.memberId);
         destination = member.name;
         if (task.kind === "ajo_cash") {
           if (member.organizer !== owner) throw new AppError("FORBIDDEN", 403);
+          if (task.date > stamp().slice(0, 10))
+            throw new AppError("INVALID_COLLECTION_DATE");
+          if (task.sourceRow) {
+            const row = await this.owned(
+              this.db,
+              owner,
+              task.sourceRow,
+              "import_row",
+            );
+            if (row.status !== "PENDING")
+              throw new AppError("IMPORT_ALREADY_RECORDED", 409);
+          }
           source = null;
           target = null;
           label = "Record cash collected";
+          destination = member.name + " · " + task.date;
         }
         if (task.kind === "ajo_contribute") {
           if (member.userId !== owner) throw new AppError("FORBIDDEN", 403);
@@ -312,6 +571,12 @@ export class Core {
         feeKobo,
         goalId,
         dependsOn,
+        ...(recipient ? { recipient } : {}),
+      });
+      await progress({
+        stage: "checking",
+        taskCount: tasks.length,
+        tasks: quoted.map((row) => ({ label: row.label, status: "ready" })),
       });
     }
     const now = stamp(),
@@ -328,23 +593,47 @@ export class Core {
           [owner, now],
         )
       ).rows[0];
-      if (open) throw new AppError("REVIEW_ALREADY_OPEN", 409);
-      await q.query("INSERT INTO plans VALUES($1,$2,1,$3,$4,$5,$6,$7,$8)", [
-        id,
-        owner,
-        "READY",
-        JSON.stringify(quoted),
-        hash,
-        expires,
-        now,
-        requestKey,
-      ]);
+      if (open && open.id !== edit?.id)
+        throw new AppError("REVIEW_ALREADY_OPEN", 409);
+      let revision = 1;
+      if (edit) {
+        if (this.db.postgres)
+          await q.query(
+            "SELECT id FROM plans WHERE id=$1 AND owner=$2 FOR UPDATE",
+            [id, owner],
+          );
+        const current = await this.plan(owner, id, q);
+        if (current.status !== "READY")
+          throw new AppError("REVIEW_CLOSED", 409);
+        if (current.revision !== edit.revision)
+          throw new AppError("REVIEW_CHANGED", 409);
+        if (current.expiresAt <= now) throw new AppError("REVIEW_EXPIRED", 409);
+        revision = current.revision + 1;
+        await q.query(
+          "UPDATE plans SET revision=$1,spec=$2,digest=$3,expires_at=$4 WHERE id=$5",
+          [revision, JSON.stringify(quoted), hash, expires, id],
+        );
+        await q.query("DELETE FROM tasks WHERE plan=$1 AND status='DRAFT'", [
+          id,
+        ]);
+        await q.query("UPDATE capabilities SET used=1 WHERE target=$1", [id]);
+      } else
+        await q.query("INSERT INTO plans VALUES($1,$2,1,$3,$4,$5,$6,$7,$8)", [
+          id,
+          owner,
+          "READY",
+          JSON.stringify(quoted),
+          hash,
+          expires,
+          now,
+          requestKey,
+        ]);
       for (let i = 0; i < quoted.length; i++)
         await q.query(
           "INSERT INTO tasks(id,plan,position,status) VALUES($1,$2,$3,$4)",
           [quoted[i].id, id, i, "DRAFT"],
         );
-      return createCapability(q, owner, "review", id, 1);
+      return createCapability(q, owner, "review", id, revision);
     });
     return { plan: await this.plan(owner, id), capability };
   }
@@ -363,7 +652,10 @@ export class Core {
       id: row.id,
       owner,
       revision: row.revision,
-      status: row.status,
+      status:
+        row.status === "READY" && row.expires_at <= stamp()
+          ? "EXPIRED"
+          : row.status,
       spec: JSON.parse(row.spec),
       digest: row.digest,
       expiresAt: row.expires_at,
@@ -373,6 +665,11 @@ export class Core {
   }
   async cancel(owner: string, id: string) {
     await this.db.transaction(async (q) => {
+      if (this.db.postgres)
+        await q.query(
+          "SELECT id FROM plans WHERE id=$1 AND owner=$2 FOR UPDATE",
+          [id, owner],
+        );
       const p = await this.plan(owner, id, q);
       if (p.status === "CANCELLED") return;
       if (p.status !== "READY") throw new AppError("ALREADY_SUBMITTED", 409);
@@ -616,7 +913,7 @@ export class Core {
             reference: task.id,
             plan: p.id,
           });
-          outcome = await this.rail.submit(task.id, task.input.kind);
+          outcome = await this.rail.submit(task.id, task.input);
         }
       } catch {
         outcome = { status: "pending", code: "PROVIDER_UNCONFIRMED" };
@@ -672,6 +969,28 @@ export class Core {
             job.owner,
             task.input.memberId,
           );
+          if (task.input.kind === "ajo_cash" && task.input.sourceRow) {
+            const row = await this.owned(
+              q,
+              job.owner,
+              task.input.sourceRow,
+              "import_row",
+            );
+            if (row.status !== "PENDING")
+              throw new AppError("IMPORT_ALREADY_RECORDED", 409);
+            const { id, version, ...data } = row;
+            await q.query(
+              "UPDATE records SET data=$1,version=version+1 WHERE id=$2",
+              [
+                JSON.stringify({
+                  ...data,
+                  status: "RECORDED",
+                  taskId: task.id,
+                }),
+                id,
+              ],
+            );
+          }
           const delta =
             task.input.kind === "ajo_cash" ? task.amountKobo : -task.amountKobo;
           if (member.cashOutstandingKobo + delta < 0)
@@ -713,10 +1032,12 @@ export class Core {
           planId: p.id,
           taskId: task.id,
           status: "SETTLED",
+          direction: task.input.kind === "goal_withdraw" ? "credit" : "debit",
           label: task.label,
           amountKobo: task.amountKobo,
           feeKobo: task.feeKobo,
           destination: task.destination,
+          ...(task.recipient ? { recipient: task.recipient } : {}),
           createdAt: stamp(),
           reference: "PW-" + task.id,
           ...(task.input.kind === "service" &&
@@ -731,6 +1052,38 @@ export class Core {
         await this.enqueue(q, "receipt:" + task.id, "receipt", job.owner, {
           receiptId: receipt,
         });
+        if (
+          task.target?.startsWith("wallet:") &&
+          task.target !== "wallet:" + job.owner
+        ) {
+          const recipient = task.target.slice(7),
+            incoming = randomUUID(),
+            sender = (
+              await q.query("SELECT name FROM users WHERE id=$1", [job.owner])
+            ).rows[0];
+          await this.put(q, incoming, recipient, "receipt", {
+            planId: p.id,
+            taskId: task.id,
+            status: "SETTLED",
+            direction: "credit",
+            label:
+              task.input.kind === "ajo_payout"
+                ? "Ajo payout received"
+                : "PayWella transfer received",
+            destination: "From " + sender.name,
+            amountKobo: task.amountKobo,
+            feeKobo: 0,
+            createdAt: stamp(),
+            reference: "PW-" + task.id,
+          });
+          await this.enqueue(
+            q,
+            "incoming-receipt:" + task.id,
+            "receipt",
+            recipient,
+            { receiptId: incoming },
+          );
+        }
         await q.query("UPDATE holds SET active=0 WHERE task=$1", [task.id]);
         await q.query("UPDATE jobs SET status='DONE' WHERE id=$1", [job.id]);
       }

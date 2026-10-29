@@ -70,6 +70,7 @@ export const Task = z.discriminatedUnion("kind", [
       memberId: z.string().uuid(),
       amountKobo: money,
       date: z.string().date(),
+      sourceRow: z.string().uuid().optional(),
     })
     .strict(),
   z
@@ -102,6 +103,18 @@ export type QuotedTask = {
   feeKobo: number;
   goalId?: string;
   dependsOn: number[];
+  recipient?: {
+    name: string;
+    bankName: string;
+    bankCode: string;
+    accountNumber: string;
+  };
+};
+export type PreparationProgress = {
+  stage: "listening" | "reading" | "understanding" | "checking" | "ready";
+  detail?: string;
+  taskCount?: number;
+  tasks?: { label: string; status: "checking" | "ready" }[];
 };
 export type Plan = {
   id: string;

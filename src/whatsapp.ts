@@ -9,14 +9,40 @@ export function verifyWhatsApp(
   const expected = createHmac("sha256", secret).update(body).digest();
   return timingSafeEqual(expected, Buffer.from(signature.slice(7), "hex"));
 }
+export async function showTyping(
+  env: NodeJS.ProcessEnv,
+  messageId: string,
+  fetcher: typeof fetch = fetch,
+) {
+  if (!env.WHATSAPP_ACCESS_TOKEN || !env.WHATSAPP_PHONE_NUMBER_ID) return;
+  await fetcher(
+    `https://graph.facebook.com/${env.WHATSAPP_GRAPH_VERSION || "v24.0"}/${env.WHATSAPP_PHONE_NUMBER_ID}/messages`,
+    {
+      method: "POST",
+      headers: {
+        authorization: "Bearer " + env.WHATSAPP_ACCESS_TOKEN,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        status: "read",
+        message_id: messageId,
+        typing_indicator: { type: "text" },
+      }),
+      signal: AbortSignal.timeout(3000),
+    },
+  );
+}
 export async function sendWhatsApp(
   env: NodeJS.ProcessEnv,
   to: string,
   text: string,
+  fetcher: typeof fetch = fetch,
+  interactive?: Record<string, unknown>,
 ) {
   if (!env.WHATSAPP_ACCESS_TOKEN || !env.WHATSAPP_PHONE_NUMBER_ID)
     throw new AppError("WHATSAPP_NOT_CONFIGURED", 503);
-  const response = await fetch(
+  const response = await fetcher(
     `https://graph.facebook.com/${env.WHATSAPP_GRAPH_VERSION || "v24.0"}/${env.WHATSAPP_PHONE_NUMBER_ID}/messages`,
     {
       method: "POST",
@@ -28,8 +54,12 @@ export async function sendWhatsApp(
       body: JSON.stringify({
         messaging_product: "whatsapp",
         to,
-        type: "text",
-        text: { body: text.slice(0, 4000), preview_url: false },
+        ...(interactive
+          ? { type: "interactive", interactive }
+          : {
+              type: "text",
+              text: { body: text.slice(0, 4000), preview_url: false },
+            }),
       }),
     },
   );
@@ -39,6 +69,7 @@ export async function sendWhatsAppReceipt(
   env: NodeJS.ProcessEnv,
   to: string,
   image: Buffer,
+  fetcher: typeof fetch = fetch,
 ) {
   if (!env.WHATSAPP_ACCESS_TOKEN || !env.WHATSAPP_PHONE_NUMBER_ID)
     throw new AppError("WHATSAPP_NOT_CONFIGURED", 503);
@@ -52,7 +83,7 @@ export async function sendWhatsAppReceipt(
     new Blob([new Uint8Array(image)], { type: "image/png" }),
     "PayWella-receipt.png",
   );
-  const upload = await fetch(base + "/media", {
+  const upload = await fetcher(base + "/media", {
     method: "POST",
     headers,
     body: file,
@@ -62,7 +93,7 @@ export async function sendWhatsAppReceipt(
   const media = await upload.json();
   if (!/^\d+$/.test(media.id || ""))
     throw new AppError("RECEIPT_UPLOAD_FAILED", 503);
-  const result = await fetch(base + "/messages", {
+  const result = await fetcher(base + "/messages", {
     method: "POST",
     headers: { ...headers, "content-type": "application/json" },
     signal: AbortSignal.timeout(10000),

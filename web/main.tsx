@@ -25,8 +25,12 @@ import {
   Sun,
   Moon,
   Trash2,
+  Settings,
 } from "lucide-react";
 import "./style.css";
+import { ImportReview } from "./import-review.js";
+import { PlanEditor } from "./plan-editor.js";
+import { TaskProgress } from "./task-progress.js";
 
 type Item = Record<string, any>;
 type Plan = Item & {
@@ -49,11 +53,15 @@ async function api(path: string, body?: unknown) {
       headers: body ? { "content-type": "application/json" } : {},
       ...(body ? { body: JSON.stringify(body) } : {}),
       credentials: "same-origin",
+      signal: AbortSignal.timeout(15000),
     }),
     value = await response.json();
   if (!response.ok)
-    throw new Error(
-      value.message || "We could not complete that step. Please try again.",
+    throw Object.assign(
+      new Error(
+        value.message || "We could not complete that step. Please try again.",
+      ),
+      { status: response.status, code: value.error },
     );
   return value;
 }
@@ -84,6 +92,9 @@ function App() {
     [theme, setTheme] = useState(initialTheme),
     [reply, setReply] = useState(""),
     [assistantBusy, setAssistantBusy] = useState(false);
+  const [whatsappNumber, setWhatsAppNumber] = useState<string | null>(null);
+  const [pendingRequest, setPendingRequest] = useState<string | null>(null),
+    [assistantProgress, setAssistantProgress] = useState<Item | null>(null);
   const lock = useRef(false),
     shownResult = useRef("");
   const showError = (e: unknown) =>
@@ -104,8 +115,15 @@ function App() {
   }, [theme]);
   useEffect(() => {
     let mounted = true;
+    if (new URLSearchParams(window.location.search).get("view") === "ajo")
+      setPage("ajo");
     const hadFragment = !!window.location.hash.slice(1);
     (async () => {
+      void api("config")
+        .then((value) => {
+          if (mounted) setWhatsAppNumber(value.whatsappNumber);
+        })
+        .catch(() => {});
       try {
         const fragment = window.location.hash.slice(1);
         if (fragment) {
@@ -116,6 +134,20 @@ function App() {
         if (!mounted) return;
         setSession(s);
         if (s.purpose === "workspace") {
+          try {
+            const pending = JSON.parse(
+              sessionStorage.getItem("pw-request") || "null",
+            );
+            if (
+              pending?.owner === s.user.id &&
+              typeof pending.id === "string"
+            ) {
+              setPendingRequest(pending.id);
+              setAssistantBusy(true);
+            }
+          } catch {
+            sessionStorage.removeItem("pw-request");
+          }
           const w = await refresh();
           const current = w.plans.find((p: Item) =>
             ["READY", "RUNNING", "PENDING"].includes(p.status),
@@ -133,6 +165,51 @@ function App() {
       mounted = false;
     };
   }, []);
+  useEffect(() => {
+    if (!pendingRequest || session?.purpose !== "workspace") return;
+    let stopped = false,
+      timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      try {
+        const value = await api("assistant/" + pendingRequest);
+        if (stopped) return;
+        if (value.pending) {
+          setAssistantProgress(value.progress || null);
+          timer = setTimeout(poll, 700);
+          return;
+        }
+        setReply(value.text);
+        setAssistantProgress(null);
+        setPendingRequest(null);
+        setAssistantBusy(false);
+        sessionStorage.removeItem("pw-request");
+        if (value.error) setError(value.text);
+        if (value.prepared?.plan) {
+          setPlan(value.prepared.plan);
+          setPage("home");
+        }
+      } catch (error) {
+        if (stopped) return;
+        showError(error);
+        if (
+          [401, 403, 404, 410].includes(
+            (error as { status?: number }).status || 0,
+          )
+        ) {
+          setPendingRequest(null);
+          setAssistantBusy(false);
+          sessionStorage.removeItem("pw-request");
+          return;
+        }
+        timer = setTimeout(poll, 3000);
+      }
+    };
+    void poll();
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+  }, [pendingRequest, session?.purpose]);
   useEffect(() => {
     if (!plan || !["RUNNING", "PENDING"].includes(plan.status)) return;
     let stopped = false;
@@ -214,6 +291,14 @@ function App() {
       setReceipt(await api("receipts/" + id));
     });
   }
+  async function openGroup(ids: string[]) {
+    await guarded(async () => {
+      const values = await Promise.all(ids.map((id) => api("receipts/" + id)));
+      setReceiptGroup(values);
+      setReceiptIndex(0);
+      setReceipt(values[0]);
+    });
+  }
   function addTask(task: Item) {
     if (drafts.length >= 5) {
       setError("You can review up to five tasks together.");
@@ -230,37 +315,32 @@ function App() {
     ).trim();
     if (!text) return;
     setAssistantBusy(true);
+    setReply("");
+    setAssistantProgress(null);
     setError("");
     const id = crypto.randomUUID();
     try {
       await api("assistant", { text, requestId: id });
-      for (let attempt = 0; attempt < 100; attempt++) {
-        await new Promise((r) => setTimeout(r, 700));
-        const value = await api("assistant/" + id);
-        if (!value.pending) {
-          setReply(value.text);
-          if (value.prepared?.plan) setPlan(value.prepared.plan);
-          setAssistantBusy(false);
-          return;
-        }
-      }
-      throw new Error(
-        "Your request is still processing. It is saved, so please check back before sending it again.",
+      sessionStorage.setItem(
+        "pw-request",
+        JSON.stringify({ id, owner: session!.user.id }),
       );
+      setPendingRequest(id);
     } catch (e) {
       showError(e);
-    } finally {
       setAssistantBusy(false);
     }
   }
   const heading =
-    page === "history"
-      ? "Your activity"
-      : page === "ajo"
-        ? "Money grows together."
-        : page === "savings"
-          ? "Make room for what matters."
-          : "Good to have you here.";
+    page === "settings"
+      ? "Make yourself at home."
+      : page === "history"
+        ? "Your activity"
+        : page === "ajo"
+          ? "Money grows together."
+          : page === "savings"
+            ? "Make room for what matters."
+            : "Good to have you here.";
   if (loading)
     return (
       <main className="entry">
@@ -321,6 +401,15 @@ function App() {
               Open your private link from PayWella on WhatsApp to get started.
             </span>
           </div>
+          {whatsappNumber && (
+            <a
+              className="primary"
+              href={"https://wa.me/" + whatsappNumber + "?text=Hi"}
+            >
+              Open PayWella on WhatsApp
+              <ArrowUpRight size={18} />
+            </a>
+          )}
           {error && <ErrorBox text={error} close={() => setError("")} />}
           <small className="test-note">
             Test environment. Financial services are simulated.
@@ -463,6 +552,7 @@ function App() {
             ["savings", "Savings", Sprout],
             ["ajo", "Ajo", Users],
             ["history", "Activity", History],
+            ["settings", "Settings", Settings],
           ].map(([key, label, C]: any) => (
             <button
               key={key}
@@ -544,6 +634,10 @@ function App() {
                   <button onClick={() => setForm("bank_transfer")}>
                     <ArrowUpRight size={18} /> Send money
                   </button>
+                  <button onClick={() => setForm("funding")}>
+                    <Plus size={18} />
+                    Account details
+                  </button>
                   <div className="balance-orbit" aria-hidden="true" />
                 </section>
                 <section className="conversation-card">
@@ -571,12 +665,13 @@ function App() {
                       required
                       disabled={assistantBusy}
                     />
-                    <button aria-label="Send request" disabled={assistantBusy}>
-                      {assistantBusy ? (
-                        <LoaderCircle className="spin" size={19} />
-                      ) : (
-                        <ArrowRight size={20} />
-                      )}
+                    <button
+                      aria-label={
+                        assistantBusy ? "Request processing" : "Send request"
+                      }
+                      disabled={assistantBusy}
+                    >
+                      <ArrowRight size={20} />
                     </button>
                   </form>
                   {reply && (
@@ -599,12 +694,7 @@ function App() {
                     </>
                   )}
                   {assistantBusy && (
-                    <div className="assistant-progress">
-                      <span />
-                      <span />
-                      <span />
-                      Preparing your request
-                    </div>
+                    <TaskProgress value={assistantProgress as any} />
                   )}
                 </section>
               </div>
@@ -637,6 +727,7 @@ function App() {
               <Transactions
                 items={workspace.receipts.slice(0, 4)}
                 open={openReceipt}
+                group={openGroup}
               />
             </>
           )}
@@ -646,8 +737,54 @@ function App() {
                 Receipts for completed tasks live here. Pending tasks stay in
                 your active review until confirmed.
               </p>
-              <Transactions items={workspace.receipts} open={openReceipt} />
+              <StatementDownload />
+              <Transactions
+                items={workspace.receipts}
+                open={openReceipt}
+                group={openGroup}
+              />
             </>
+          )}
+          {!restricted && workspace && page === "settings" && (
+            <section className="settings-panel">
+              <h2>Your preferences</h2>
+              <label>
+                Reply language
+                <select
+                  value={workspace.user.language}
+                  disabled={busy}
+                  onChange={(event) =>
+                    guarded(async () => {
+                      await api("settings", { language: event.target.value });
+                      await refresh();
+                    })
+                  }
+                >
+                  <option value="en">English</option>
+                  <option value="pcm">Nigerian Pidgin</option>
+                  <option value="yo">Yorùbá</option>
+                  <option value="ig">Igbo</option>
+                  <option value="ha">Hausa</option>
+                </select>
+              </label>
+              <p className="review-note">
+                This sets the assistant’s preferred language. You can still
+                switch languages in conversation. Web controls currently use
+                English.
+              </p>
+              <label>
+                Appearance
+                <Theme value={theme} change={setTheme} />
+              </label>
+              <button
+                className="secondary"
+                disabled={busy}
+                onClick={() => setForm("funding")}
+              >
+                Your account details
+                <ArrowRight size={17} />
+              </button>
+            </section>
           )}
           {!restricted && workspace && page === "savings" && (
             <>
@@ -725,6 +862,23 @@ function App() {
                   )}
                 </div>
               </div>
+              {workspace.imports?.map((candidate: Item) => (
+                <ImportReview
+                  key={candidate.id}
+                  candidate={candidate}
+                  members={workspace.members.filter(
+                    (member: Item) => member.organizer === workspace.user.id,
+                  )}
+                  busy={busy}
+                  onPrepare={(tasks) =>
+                    guarded(async () => {
+                      const result = await api("plans", { tasks });
+                      setPlan(result.plan);
+                      setPage("home");
+                    })
+                  }
+                />
+              ))}
               {workspace.books.map((b: Item) => (
                 <section className="book" key={b.id}>
                   <h3>{b.name}</h3>
@@ -834,25 +988,42 @@ function App() {
           )}
           {plan &&
             (page === "home" || restricted) &&
-            !["CANCELLED", "EXPIRED"].includes(plan.status) && (
+            (restricted || !["CANCELLED", "EXPIRED"].includes(plan.status)) && (
               <PlanView
+                key={plan.id + ":" + plan.revision}
                 plan={plan}
                 busy={busy}
                 restricted={restricted}
-                approve={(pin: string) =>
+                edit={(tasks: Item[]) =>
                   guarded(async () => {
                     setPlan(
-                      await api("plans/" + plan.id + "/approve", {
+                      await api("plans/" + plan.id + "/edit", {
                         revision: plan.revision,
-                        pin,
+                        tasks,
                       }),
                     );
+                  })
+                }
+                approve={(pin: string) =>
+                  guarded(async () => {
+                    try {
+                      setPlan(
+                        await api("plans/" + plan.id + "/approve", {
+                          revision: plan.revision,
+                          pin,
+                        }),
+                      );
+                    } catch (error) {
+                      const current = await api("plans/" + plan.id);
+                      if (current.status === "READY") throw error;
+                      setPlan(current);
+                    }
                   })
                 }
                 cancel={() =>
                   guarded(async () => {
                     await api("plans/" + plan.id + "/cancel", {});
-                    setPlan(null);
+                    setPlan(restricted ? await api("plans/" + plan.id) : null);
                   })
                 }
                 openReceipt={openReceipt}
@@ -865,7 +1036,24 @@ function App() {
           </footer>
         </main>
       </div>
-      {form && workspace && (
+      {form === "funding" && workspace && (
+        <Modal label="Your account details" close={() => setForm("")}>
+          <div className="funding-details">
+            <span className="eyebrow">YOUR NAIRA ACCOUNT</span>
+            <h2>Account details</h2>
+            <p>{workspace.funding.name}</p>
+            <strong className="funding-number">
+              {workspace.funding.accountNumber}
+            </strong>
+            <p>{workspace.funding.bankName}</p>
+            <p className="review-note">
+              This test account already has an opening balance. Do not send real
+              money to these details.
+            </p>
+          </div>
+        </Modal>
+      )}
+      {form && form !== "funding" && workspace && (
         <TaskForm
           type={form}
           w={workspace}
@@ -883,7 +1071,11 @@ function App() {
       )}
       {receipt && (
         <Receipt
+          key={receipt.id}
           receipt={receipt}
+          onSaved={() => {
+            if (session.purpose === "workspace") void refresh().catch(() => {});
+          }}
           close={() => {
             setReceipt(null);
             setReceiptGroup([]);
@@ -947,6 +1139,90 @@ function Theme({
     </label>
   );
 }
+function StatementDownload() {
+  const today = new Date().toISOString().slice(0, 10),
+    [start, setStart] = useState(today.slice(0, 8) + "01"),
+    [end, setEnd] = useState(today),
+    [busy, setBusy] = useState(false),
+    [error, setError] = useState("");
+  return (
+    <form
+      className="statement-download"
+      onSubmit={async (event) => {
+        event.preventDefault();
+        if (busy) return;
+        setBusy(true);
+        setError("");
+        try {
+          const response = await fetch(
+            "/api/statement.pdf?" + new URLSearchParams({ start, end }),
+            { credentials: "same-origin" },
+          );
+          if (!response.ok) {
+            const value = await response.json();
+            throw Error(
+              value.message ||
+                "The statement could not download. Try a shorter period.",
+            );
+          }
+          const url = URL.createObjectURL(await response.blob()),
+            link = document.createElement("a");
+          link.href = url;
+          link.download = "PayWella-statement.pdf";
+          link.click();
+          setTimeout(() => URL.revokeObjectURL(url), 1000);
+        } catch (error) {
+          setError(
+            error instanceof Error
+              ? error.message
+              : "The statement could not download.",
+          );
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      <div>
+        <h2>Your account statement</h2>
+        <p>Posted transactions, opening balance and closing balance.</p>
+      </div>
+      <div className="field-row">
+        <label>
+          From
+          <input
+            type="date"
+            value={start}
+            max={end}
+            required
+            disabled={busy}
+            onChange={(event) => setStart(event.target.value)}
+          />
+        </label>
+        <label>
+          To
+          <input
+            type="date"
+            value={end}
+            min={start}
+            max={today}
+            required
+            disabled={busy}
+            onChange={(event) => setEnd(event.target.value)}
+          />
+        </label>
+      </div>
+      {error && <p role="alert">{error}</p>}
+      <button className="secondary" disabled={busy}>
+        {busy ? (
+          <LoaderCircle size={17} className="spin" />
+        ) : (
+          <Download size={17} />
+        )}{" "}
+        {busy ? "Preparing statement" : "Download PDF"}
+      </button>
+    </form>
+  );
+}
 function ErrorBox({ text, close }: { text: string; close: () => void }) {
   return (
     <div className="error-box" role="alert">
@@ -978,10 +1254,18 @@ function Empty({ icon: C, title, text, action, actionText }: any) {
 function Transactions({
   items,
   open,
+  group,
 }: {
   items: Item[];
   open: (id: string) => void;
+  group?: (ids: string[]) => void;
 }) {
+  const groups = Object.values(
+    items.reduce<Record<string, Item[]>>((result, row) => {
+      (result[row.planId || row.id] ||= []).push(row);
+      return result;
+    }, {}),
+  );
   return (
     <section className="transactions">
       {!items.length ? (
@@ -991,30 +1275,46 @@ function Transactions({
           text="Once a task is completed, you’ll find its receipt here."
         />
       ) : (
-        items.map((t) => (
-          <button
-            key={t.id}
-            className="transaction-row"
-            onClick={() => open(t.id)}
-          >
-            <span className="transaction-icon">
-              <Icon type={t.status} />
-            </span>
-            <div>
-              <strong>{t.label}</strong>
-              <span>
-                {t.destination || "Your account"} ·{" "}
-                {new Date(t.createdAt).toLocaleDateString("en-NG", {
-                  month: "short",
-                  day: "numeric",
-                })}
-              </span>
-            </div>
-            <strong className="transaction-amount">
-              {money(t.amountKobo)}
-            </strong>
-            <ChevronRight size={17} />
-          </button>
+        groups.map((rows) => (
+          <div className="activity-group" key={rows[0].planId || rows[0].id}>
+            {rows.length > 1 && (
+              <button
+                className="activity-group-heading"
+                onClick={() => group?.(rows.map((row) => row.id))}
+              >
+                <span>{rows.length} tasks approved together</span>
+                <span>
+                  View receipts
+                  <ChevronRight size={14} />
+                </span>
+              </button>
+            )}
+            {rows.map((t) => (
+              <button
+                key={t.id}
+                className="transaction-row"
+                onClick={() => open(t.id)}
+              >
+                <span className="transaction-icon">
+                  <Icon type={t.status} />
+                </span>
+                <div>
+                  <strong>{t.label}</strong>
+                  <span>
+                    {t.destination || "Your account"} ·{" "}
+                    {new Date(t.createdAt).toLocaleDateString("en-NG", {
+                      month: "short",
+                      day: "numeric",
+                    })}
+                  </span>
+                </div>
+                <strong className="transaction-amount">
+                  {money(t.amountKobo)}
+                </strong>
+                <ChevronRight size={17} />
+              </button>
+            ))}
+          </div>
         ))
       )}
     </section>
@@ -1028,8 +1328,10 @@ function PlanView({
   openReceipt,
   dismiss,
   restricted,
+  edit,
 }: any) {
   const [pin, setPin] = useState("");
+  const [editing, setEditing] = useState(false);
   const ready = plan.status === "READY",
     running = ["RUNNING", "PENDING"].includes(plan.status),
     total = plan.spec.reduce(
@@ -1065,7 +1367,11 @@ function PlanView({
                   ? "All done. Every task confirmed."
                   : plan.status === "PARTIAL"
                     ? "Some tasks need your attention."
-                    : "These tasks were not completed."}
+                    : plan.status === "EXPIRED"
+                      ? "This review has expired."
+                      : plan.status === "CANCELLED"
+                        ? "This review was cancelled."
+                        : "These tasks were not completed."}
           </h2>
         </div>
         {!restricted && !ready && !running && (
@@ -1078,115 +1384,151 @@ function PlanView({
           </button>
         )}
       </header>
-      <div className="plan-steps">
-        {plan.spec.map((t: Item, i: number) => {
-          const result = plan.tasks.find((r: Item) => r.id === t.id);
-          return (
-            <div className="plan-task" key={t.id}>
-              <span className={"task-indicator " + (result?.status || "")}>
-                <Icon type={result?.status || "DRAFT"} />
-              </span>
-              <div>
-                <strong>{t.label}</strong>
-                <p>{t.destination}</p>
-                <span>
-                  {ready
-                    ? "Ready for your approval"
-                    : result?.status === "SETTLED"
-                      ? "Successfully completed"
-                      : result?.status === "PENDING"
-                        ? "Awaiting provider confirmation"
-                        : result?.status === "QUEUED"
-                          ? "Queued securely"
-                          : result?.status === "FAILED"
-                            ? "Not completed. No debit was posted."
-                            : result?.status}
-                </span>
-              </div>
-              <div className="task-right">
-                <strong>{money(t.amountKobo)}</strong>
-                {result?.receipt && (
-                  <button
-                    className="text-button"
-                    onClick={() => openReceipt(result.receipt)}
-                  >
-                    Receipt
-                    <ArrowUpRight size={14} />
-                  </button>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-      {ready && (
+      {ready && editing ? (
+        <PlanEditor
+          plan={plan}
+          busy={busy}
+          save={edit}
+          close={() => setEditing(false)}
+        />
+      ) : (
         <>
-          <div className="review-total">
-            <span>Total task amounts</span>
-            <strong>{money(total)}</strong>
+          <div className="plan-steps">
+            {plan.spec.map((t: Item, i: number) => {
+              const result = plan.tasks.find((r: Item) => r.id === t.id);
+              return (
+                <div className="plan-task" key={t.id}>
+                  <span className={"task-indicator " + (result?.status || "")}>
+                    <Icon type={result?.status || "DRAFT"} />
+                  </span>
+                  <div>
+                    <strong>{t.label}</strong>
+                    <p>{t.destination}</p>
+                    <span>
+                      {ready
+                        ? "Ready for your approval"
+                        : result?.status === "SETTLED"
+                          ? "Successfully completed"
+                          : result?.status === "PENDING"
+                            ? "Awaiting provider confirmation"
+                            : result?.status === "QUEUED"
+                              ? "Queued securely"
+                              : result?.status === "FAILED"
+                                ? "Not completed. No debit was posted."
+                                : result?.status}
+                    </span>
+                  </div>
+                  <div className="task-right">
+                    <strong>{money(t.amountKobo)}</strong>
+                    {result?.receipt && (
+                      <button
+                        className="text-button"
+                        onClick={() => openReceipt(result.receipt)}
+                      >
+                        Receipt
+                        <ArrowUpRight size={14} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
           </div>
-          <p className="review-note">
-            Includes all reviewed task amounts. Savings withdrawals move money
-            back to your wallet. Confirm the individual directions above.
-          </p>
-          <form
-            className="pin-form"
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (busy || pin.length !== 4) return;
-              const value = pin;
-              setPin("");
-              void approve(value);
-            }}
-          >
-            <label htmlFor="approval-pin">Your 4-digit transaction PIN</label>
-            <input
-              id="approval-pin"
-              autoFocus
-              autoComplete="off"
-              type="password"
-              inputMode="numeric"
-              pattern="[0-9]{4}"
-              value={pin}
-              onChange={(e) =>
-                setPin(e.target.value.replace(/\D/g, "").slice(0, 4))
-              }
-              maxLength={4}
-              disabled={busy}
-              required
-            />
-            <div className="review-actions">
+          {ready && (
+            <>
+              <div className="review-total">
+                <span>Total task amounts</span>
+                <strong>{money(total)}</strong>
+              </div>
+              <p className="review-note">
+                Includes all reviewed task amounts. Savings withdrawals move
+                money back to your wallet. Confirm the individual directions
+                above.
+              </p>
               <button
                 type="button"
-                className="secondary"
-                onClick={cancel}
+                className="text-button"
                 disabled={busy}
+                onClick={() => {
+                  setPin("");
+                  setEditing(true);
+                }}
               >
-                Cancel review
+                Edit these tasks
+                <ArrowRight size={16} />
               </button>
-              <button className="primary" disabled={busy || pin.length !== 4}>
-                {busy ? (
-                  <>
-                    <LoaderCircle className="spin" size={18} />
-                    Submitting securely
-                  </>
-                ) : (
-                  <>
-                    Approve {plan.spec.length > 1 ? "all tasks" : "task"}
-                    <ArrowRight size={17} />
-                  </>
-                )}
-              </button>
-            </div>
-          </form>
+              <form
+                className="pin-form"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (busy || pin.length !== 4) return;
+                  const value = pin;
+                  setPin("");
+                  void approve(value);
+                }}
+              >
+                <label htmlFor="approval-pin">
+                  Your 4-digit transaction PIN
+                </label>
+                <input
+                  id="approval-pin"
+                  autoFocus
+                  autoComplete="off"
+                  type="password"
+                  inputMode="numeric"
+                  pattern="[0-9]{4}"
+                  value={pin}
+                  onChange={(e) =>
+                    setPin(e.target.value.replace(/\D/g, "").slice(0, 4))
+                  }
+                  maxLength={4}
+                  disabled={busy}
+                  required
+                />
+                <div className="review-actions">
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={cancel}
+                    disabled={busy}
+                  >
+                    Cancel review
+                  </button>
+                  <button
+                    className="primary"
+                    disabled={busy || pin.length !== 4}
+                  >
+                    {busy ? (
+                      <>
+                        <LoaderCircle className="spin" size={18} />
+                        Submitting securely
+                      </>
+                    ) : (
+                      <>
+                        Approve {plan.spec.length > 1 ? "all tasks" : "task"}
+                        <ArrowRight size={17} />
+                      </>
+                    )}
+                  </button>
+                </div>
+              </form>
+            </>
+          )}
+          {running && (
+            <p className="pending-note">
+              <Clock3 size={18} />
+              You can leave and return. Your tasks keep running. Please don’t
+              submit them again.
+            </p>
+          )}
+          {["EXPIRED", "CANCELLED"].includes(plan.status) && (
+            <p className="pending-note">
+              <ShieldCheck size={18} />
+              No task in this review was authorized. Return to PayWella on
+              WhatsApp and ask for a fresh review when you’re ready.
+            </p>
+          )}
         </>
-      )}
-      {running && (
-        <p className="pending-note">
-          <Clock3 size={18} />
-          You can leave and return. Your tasks keep running. Please don’t submit
-          them again.
-        </p>
       )}
     </section>
   );
@@ -1260,6 +1602,9 @@ function Modal({
 function TaskForm({ type, w, close, add, save, busy }: any) {
   const [kind, id] = type.split(":"),
     [selected, setSelected] = useState(w.products[0].id);
+  const [bankCode, setBankCode] = useState(""),
+    [accountNumber, setAccountNumber] = useState(""),
+    [beneficiary, setBeneficiary] = useState("");
   const product = w.products.find((p: Item) => p.id === selected);
   const title: Record<string, string> = {
     bank_transfer: "Send to a bank",
@@ -1352,9 +1697,43 @@ function TaskForm({ type, w, close, add, save, busy }: any) {
         )}
         {kind === "bank_transfer" && (
           <>
+            {!!w.beneficiaries?.length && (
+              <label>
+                Saved recipient
+                <select
+                  value={beneficiary}
+                  onChange={(event) => {
+                    const recipient = w.beneficiaries.find(
+                      (item: Item) => item.id === event.target.value,
+                    );
+                    setBeneficiary(event.target.value);
+                    if (recipient) {
+                      setBankCode(recipient.bankCode);
+                      setAccountNumber(recipient.accountNumber);
+                    }
+                  }}
+                >
+                  <option value="">Choose a saved recipient</option>
+                  {w.beneficiaries.map((recipient: Item) => (
+                    <option key={recipient.id} value={recipient.id}>
+                      {recipient.alias || recipient.name} ·{" "}
+                      {recipient.accountNumber}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             <label>
               Bank
-              <select name="bankCode" required defaultValue="">
+              <select
+                name="bankCode"
+                required
+                value={bankCode}
+                onChange={(event) => {
+                  setBankCode(event.target.value);
+                  setBeneficiary("");
+                }}
+              >
                 <option value="" disabled>
                   Choose a bank
                 </option>
@@ -1375,6 +1754,11 @@ function TaskForm({ type, w, close, add, save, busy }: any) {
                 maxLength={10}
                 required
                 autoComplete="off"
+                value={accountNumber}
+                onChange={(event) => {
+                  setAccountNumber(event.target.value.replace(/\D/g, ""));
+                  setBeneficiary("");
+                }}
               />
             </label>
           </>
@@ -1503,11 +1887,16 @@ function Receipt({
   receipt: r,
   close,
   pager,
+  onSaved,
 }: {
   receipt: Item;
   close: () => void;
   pager?: React.ReactNode;
+  onSaved?: () => void;
 }) {
+  const [saving, setSaving] = useState(false),
+    [saved, setSaved] = useState(false),
+    [error, setError] = useState("");
   return (
     <Modal close={close} label="Transaction receipt">
       <div className="receipt">
@@ -1530,7 +1919,13 @@ function Receipt({
         </div>
         <div className="receipt-details">
           {[
-            ["To", r.destination || "Your savings"],
+            ...(r.recipient
+              ? [
+                  ["Recipient", r.recipient.name],
+                  ["Bank", r.recipient.bankName],
+                  ["Account number", r.recipient.accountNumber],
+                ]
+              : [["To", r.destination || "Your savings"]]),
             ["Fee", money(r.feeKobo)],
             ["Date", new Date(r.createdAt).toLocaleString("en-NG")],
             ["Reference", r.reference],
@@ -1548,6 +1943,60 @@ function Receipt({
           <Download size={17} />
           Download receipt
         </a>
+        {r.recipient && (
+          <details className="save-recipient">
+            <summary>
+              {saved ? "Recipient saved" : "Save this recipient"}
+            </summary>
+            {!saved && (
+              <form
+                onSubmit={async (event) => {
+                  event.preventDefault();
+                  if (saving) return;
+                  const alias = String(
+                    new FormData(event.currentTarget).get("alias") || "",
+                  );
+                  setSaving(true);
+                  setError("");
+                  try {
+                    await api("receipts/" + r.id + "/save-recipient", {
+                      alias,
+                    });
+                    setSaved(true);
+                    onSaved?.();
+                  } catch (error) {
+                    setError(
+                      error instanceof Error
+                        ? error.message
+                        : "The recipient could not be saved.",
+                    );
+                  } finally {
+                    setSaving(false);
+                  }
+                }}
+              >
+                <label>
+                  Save as (optional)
+                  <input
+                    name="alias"
+                    maxLength={60}
+                    placeholder="e.g. Mum"
+                    disabled={saving}
+                  />
+                </label>
+                {error && <p role="alert">{error}</p>}
+                <button className="secondary" disabled={saving}>
+                  {saving ? (
+                    <LoaderCircle className="spin" size={17} />
+                  ) : (
+                    <Check size={17} />
+                  )}{" "}
+                  {saving ? "Saving recipient" : "Save recipient"}
+                </button>
+              </form>
+            )}
+          </details>
+        )}
         <small className="test-note">
           Financial rails are simulated. No real bank payment was sent.
         </small>

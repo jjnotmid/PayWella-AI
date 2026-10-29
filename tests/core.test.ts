@@ -5,6 +5,51 @@ import { Core } from "../src/core.ts";
 import { SandboxRail } from "../src/providers/sandbox.ts";
 import { balance } from "../src/ledger.ts";
 import { checkPin } from "../src/security.ts";
+import { randomUUID } from "node:crypto";
+import { mkdtemp, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+test("a restarted service recovers an uncertain payment from its existing reference without opening credits or a second submission", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "paywella-ai-recovery-")),
+    file = join(directory, "recovery.sqlite");
+  let db = await openStore({ file });
+  try {
+    let core = new Core(db);
+    const owner = await core.userForPhone("2348000000001");
+    await core.setup(owner, "Ada Example", "1234");
+    const rail = core.rail as SandboxRail,
+      submit = rail.submit.bind(rail);
+    rail.submit = async (reference, task) => {
+      await submit(reference, task);
+      throw Error("Provider response was lost.");
+    };
+    const review = await core.prepare(owner, { tasks: [transfer] });
+    await core.approve(owner, review.plan.id, 1, "1234");
+    await core.drain(1);
+    assert.equal((await core.plan(owner, review.plan.id)).status, "PENDING");
+    await db.close();
+    db = await openStore({ file });
+    core = new Core(db);
+    await db.query(
+      "UPDATE jobs SET lease_until='2000-01-01' WHERE kind='task'",
+    );
+    await core.drain();
+    assert.equal((await core.plan(owner, review.plan.id)).status, "SUCCEEDED");
+    assert.equal((await core.workspace(owner)).balanceKobo, 49800000);
+    assert.equal((core.rail as SandboxRail).submissions.size, 0);
+    assert.equal(
+      (
+        await db.query("SELECT id FROM journals WHERE reference=$1", [
+          review.plan.spec[0].id,
+        ])
+      ).rows.length,
+      1,
+    );
+  } finally {
+    await db.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 async function fixture() {
   const db = await openStore({ file: ":memory:" }),
     rail = new SandboxRail(),
@@ -19,6 +64,124 @@ const transfer = {
   accountNumber: "0123456789",
   amountKobo: 200000,
 };
+test("editing replaces the review revision, checks the new recipient and rejects old or already accepted instructions", async () => {
+  const { db, core, owner, rail } = await fixture();
+  try {
+    const first = await core.prepare(
+      owner,
+      {
+        tasks: [
+          transfer,
+          { kind: "goal_create", name: "Rent", amountKobo: 300000 },
+        ],
+      },
+      "editable-request",
+    );
+    const edited = await core.prepare(
+      owner,
+      {
+        tasks: [
+          {
+            ...transfer,
+            bankCode: "wema",
+            accountNumber: "1234567890",
+            amountKobo: 100000,
+          },
+        ],
+      },
+      null,
+      { id: first.plan.id, revision: 1 },
+    );
+    assert.equal(edited.plan.id, first.plan.id);
+    assert.equal(edited.plan.revision, 2);
+    assert.equal(edited.plan.tasks.length, 1);
+    assert.match(edited.plan.spec[0].destination!, /Wema Bank · 1234567890/);
+    const { digest } = await import("../src/security.ts");
+    assert.equal(
+      (
+        await db.query("SELECT used FROM capabilities WHERE hash=$1", [
+          digest(first.capability),
+        ])
+      ).rows[0].used,
+      1,
+    );
+    await assert.rejects(
+      () => core.approve(owner, first.plan.id, 1, "1234"),
+      (e: any) => e.code === "REVIEW_CHANGED",
+    );
+    await assert.rejects(
+      () =>
+        core.prepare(owner, { tasks: [transfer] }, null, {
+          id: first.plan.id,
+          revision: 1,
+        }),
+      (e: any) => e.code === "REVIEW_CHANGED",
+    );
+    await core.approve(owner, edited.plan.id, 2, "1234");
+    await core.drain();
+    await assert.rejects(
+      () =>
+        core.prepare(owner, { tasks: [transfer] }, null, {
+          id: first.plan.id,
+          revision: 2,
+        }),
+      (e: any) => e.code === "REVIEW_CLOSED",
+    );
+    assert.equal((await core.workspace(owner)).balanceKobo, 49900000);
+    assert.equal(rail.submissions.size, 1);
+  } finally {
+    await db.close();
+  }
+});
+test("a reviewed notebook row creates one cash liability and cannot be recorded twice or by another owner", async () => {
+  const { db, core, owner } = await fixture();
+  try {
+    await db.query("UPDATE users SET organizer=1 WHERE id=$1", [owner]);
+    const book = await core.createBook(owner, "Market"),
+      member = await core.addMember(owner, book.id, {
+        name: "Tunde Example",
+        dailyKobo: 20000,
+        maturityDate: "2027-01-01",
+      }),
+      row = randomUUID();
+    await core.put(db, row, owner, "import_row", {
+      name: "Tunde Example",
+      amountKobo: 60000,
+      date: "2026-10-27",
+      status: "PENDING",
+    });
+    const input = {
+        tasks: [
+          {
+            kind: "ajo_cash",
+            memberId: member.id,
+            amountKobo: 60000,
+            date: "2026-10-27",
+            sourceRow: row,
+          },
+        ],
+      },
+      review = await core.prepare(owner, input);
+    assert.equal(
+      (await core.records(owner, "member"))[0].cashOutstandingKobo,
+      0,
+    );
+    await core.approve(owner, review.plan.id, 1, "1234");
+    await core.drain();
+    assert.equal(
+      (await core.records(owner, "member"))[0].cashOutstandingKobo,
+      60000,
+    );
+    assert.equal(await balance(db, "ajo:" + member.id), 0);
+    await assert.rejects(
+      () => core.prepare(owner, input),
+      (e: any) => e.code === "IMPORT_ALREADY_RECORDED",
+    );
+    assert.equal((await core.workspace(owner)).balanceKobo, 50000000);
+  } finally {
+    await db.close();
+  }
+});
 test("opening credits once, and concurrent approvals and worker passes cannot duplicate a payment", async () => {
   const { db, core, owner, rail } = await fixture();
   try {
