@@ -63,19 +63,59 @@ export function receiptImage(receipt: Row) {
     anchor = "start",
   ) =>
     `<text x="${x}" y="${y}" font-family="${String(value).includes("₦") ? "Noto Sans" : "Manrope"}" font-size="${size}" font-weight="${weight}" fill="${fill}" text-anchor="${anchor}">${escape(value)}</text>`;
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1500" viewBox="0 0 1080 1500"><rect width="1080" height="1500" fill="#082F27"/><rect x="36" y="36" width="1008" height="1428" rx="42" fill="#FFFAF3"/><image href="data:image/png;base64,${logo}" x="85" y="75" width="285" height="100"/><g font-family="Manrope">${text("PAYMENT RECORD", 995, 130, 19, 600, "#657469", "end")}<path d="M88 225H992" stroke="#DFE5D7"/><circle cx="110" cy="290" r="23" fill="#DCEA9B"/><path d="m98 290 9 9 16-19" fill="none" stroke="#082F27" stroke-width="3"/>${text("Successfully completed", 151, 300, 25, 600)}${text("Amount", 85, 390, 25, 400, "#657469")}${text(naira(receipt.amountKobo), 85, 485, 76, 600)}${text(receipt.label, 85, 570, 27, 600)}${destination
-    .slice(0, 3)
+  const coverage = receipt.allocation?.periods as
+    | { date: string; remainingKobo: number }[]
+    | undefined;
+  const destinationBottom = 625 + (destination.length - 1) * 46,
+    noteTitleY = destinationBottom + 62,
+    noteValueY = noteTitleY + 45,
+    noteEndY = coverage?.at(-1)?.remainingKobo ? noteValueY + 38 : noteValueY;
+  const extra = receipt.electricityToken
+    ? text("Electricity token", 85, noteTitleY, 22, 400, "#657469") +
+      text(
+        String(receipt.electricityToken).replace(/(.{4})(?=.)/g, "$1 "),
+        85,
+        noteValueY,
+        30,
+        600,
+      )
+    : coverage?.length
+      ? text("Contribution dates", 85, noteTitleY, 22, 400, "#657469") +
+        text(
+          coverage[0].date +
+            (coverage.length > 1 ? " to " + coverage.at(-1)!.date : ""),
+          85,
+          noteValueY,
+          27,
+          600,
+        ) +
+        (coverage.at(-1)!.remainingKobo
+          ? text(
+              naira(coverage.at(-1)!.remainingKobo) +
+                " still due for " +
+                coverage.at(-1)!.date,
+              85,
+              noteEndY,
+              23,
+              400,
+              "#657469",
+            )
+          : "")
+      : "";
+  const detailsY = Math.max(790, (extra ? noteEndY : destinationBottom) + 36),
+    height = detailsY + 710;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="${height}" viewBox="0 0 1080 ${height}"><rect width="1080" height="${height}" fill="#082F27"/><rect x="36" y="36" width="1008" height="${height - 72}" rx="42" fill="#FFFAF3"/><image href="data:image/png;base64,${logo}" x="85" y="75" width="285" height="100"/><g font-family="Manrope">${text(receipt.kind === "ajo_cash" ? "COLLECTION RECORD" : "PAYMENT RECORD", 995, 130, 19, 600, "#657469", "end")}<path d="M88 225H992" stroke="#DFE5D7"/><circle cx="110" cy="290" r="23" fill="#DCEA9B"/><path d="m98 290 9 9 16-19" fill="none" stroke="#082F27" stroke-width="3"/>${text(receipt.kind === "ajo_cash" ? "Cash recorded successfully" : "Successfully completed", 151, 300, 25, 600)}${text("Amount", 85, 390, 25, 400, "#657469")}${text(naira(receipt.amountKobo), 85, 485, 76, 600)}${text(receipt.label, 85, 570, 27, 600)}${destination
     .map((line, i) => text(line, 85, 625 + i * 46, 30, 600))
     .join(
       "",
-    )}${receipt.electricityToken ? text("Electricity token", 85, 710, 22, 400, "#657469") + text(String(receipt.electricityToken).replace(/(.{4})(?=.)/g, "$1 "), 85, 756, 30, 600) : ""}<path d="M85 790H995" stroke="#DFE5D7"/>${text("Date and time", 85, 845, 24, 400, "#657469")}${text(date, 85, 896, 29, 600)}${text("Fee", 85, 990, 25, 400, "#657469")}${text(naira(receipt.feeKobo), 995, 990, 29, 600, "#082F27", "end")}<path d="M85 1040H995" stroke="#DFE5D7" stroke-dasharray="10 12"/>${text("Reference", 85, 1100, 24, 400, "#657469")}${wrap(
+    )}${extra}<path d="M85 ${detailsY}H995" stroke="#DFE5D7"/>${text("Date and time", 85, detailsY + 55, 24, 400, "#657469")}${text(date, 85, detailsY + 106, 29, 600)}${text("Fee", 85, detailsY + 200, 25, 400, "#657469")}${text(naira(receipt.feeKobo), 995, detailsY + 200, 29, 600, "#082F27", "end")}<path d="M85 ${detailsY + 250}H995" stroke="#DFE5D7" stroke-dasharray="10 12"/>${text("Reference", 85, detailsY + 310, 24, 400, "#657469")}${wrap(
     receipt.reference,
     49,
   )
-    .map((line, i) => text(line, 85, 1152 + i * 40, 26, 600))
+    .map((line, i) => text(line, 85, detailsY + 362 + i * 40, 26, 600))
     .join(
       "",
-    )}<path d="M85 1275H995" stroke="#DFE5D7"/>${text("Thank you for using PayWella", 540, 1340, 27, 600, "#082F27", "middle")}${text("Test environment. No real bank payment was sent.", 540, 1395, 20, 400, "#657469", "middle")}</g></svg>`;
+    )}<path d="M85 ${detailsY + 485}H995" stroke="#DFE5D7"/>${text("Thank you for using PayWella", 540, detailsY + 550, 27, 600, "#082F27", "middle")}${text("Test environment. No real bank payment was sent.", 540, detailsY + 605, 20, 400, "#657469", "middle")}</g></svg>`;
   return Buffer.from(
     new Resvg(svg, {
       font: {

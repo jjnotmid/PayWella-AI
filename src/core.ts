@@ -18,6 +18,12 @@ import {
 } from "./security.ts";
 import { SandboxRail, banks, products } from "./providers/sandbox.ts";
 import type { Rail } from "./providers/sandbox.ts";
+import {
+  allocateContribution,
+  contributionCapacity,
+  contributionSummary,
+  lagosDate,
+} from "./ajo-allocation.ts";
 
 export class Core {
   db: Store;
@@ -209,6 +215,10 @@ export class Core {
       members: memberRows.map((member) => ({
         ...member,
         fundedKobo: totals.get("ajo:" + member.id)?.balance || 0,
+        contribution:
+          member.contributedKobo === undefined
+            ? null
+            : contributionSummary(member, member.contributedKobo),
       })),
       plans: plans.rows,
       receipts: receipts.sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
@@ -410,6 +420,7 @@ export class Core {
     const id = edit?.id || randomUUID(),
       quoted: QuotedTask[] = [],
       goals = await this.records(owner, "goal");
+    const contributions = new Map<string, number>();
     for (const task of tasks) {
       await progress({
         stage: "checking",
@@ -438,6 +449,7 @@ export class Core {
         feeKobo = 0,
         goalId: string | undefined;
       let recipient: QuotedTask["recipient"];
+      let allocation: QuotedTask["allocation"];
       const dependsOn: number[] = [];
       if (task.kind === "bank_transfer") {
         destination = await this.rail.enquire(
@@ -519,9 +531,26 @@ export class Core {
       } else {
         const member = await this.membership(this.db, owner, task.memberId);
         destination = member.name;
+        if (task.kind === "ajo_cash" || task.kind === "ajo_contribute") {
+          if (member.contributedKobo === undefined)
+            throw new AppError("AJO_RECORD_REVIEW_REQUIRED", 409);
+          allocation = allocateContribution(
+            member,
+            contributions.get(member.id) ?? member.contributedKobo,
+            task.amountKobo,
+          );
+          contributions.set(member.id, allocation.afterKobo);
+          const previous = quoted.findLastIndex(
+            (row) =>
+              (row.input.kind === "ajo_cash" ||
+                row.input.kind === "ajo_contribute") &&
+              row.input.memberId === member.id,
+          );
+          if (previous >= 0) dependsOn.push(previous);
+        }
         if (task.kind === "ajo_cash") {
           if (member.organizer !== owner) throw new AppError("FORBIDDEN", 403);
-          if (task.date > stamp().slice(0, 10))
+          if (task.date > lagosDate())
             throw new AppError("INVALID_COLLECTION_DATE");
           if (task.sourceRow) {
             const row = await this.owned(
@@ -553,7 +582,7 @@ export class Core {
         if (task.kind === "ajo_payout") {
           if (member.organizer !== owner || !member.userId)
             throw new AppError("MEMBER_ACCOUNT_REQUIRED");
-          if (member.maturityDate > stamp().slice(0, 10))
+          if (member.maturityDate > lagosDate())
             throw new AppError("NOT_MATURED");
           source = `ajo:${member.id}`;
           target = `wallet:${member.userId}`;
@@ -572,6 +601,7 @@ export class Core {
         goalId,
         dependsOn,
         ...(recipient ? { recipient } : {}),
+        ...(allocation ? { allocation } : {}),
       });
       await progress({
         stage: "checking",
@@ -701,6 +731,41 @@ export class Core {
       if (p.expiresAt <= stamp()) throw new AppError("REVIEW_EXPIRED", 409);
       if (digest(JSON.stringify(p.spec)) !== p.digest)
         throw new AppError("REVIEW_CHANGED", 409);
+      const contributionTotals = new Map<string, number>();
+      for (const memberId of [
+        ...new Set(
+          p.spec.flatMap((task) =>
+            task.allocation &&
+            (task.input.kind === "ajo_cash" ||
+              task.input.kind === "ajo_contribute")
+              ? [task.input.memberId]
+              : [],
+          ),
+        ),
+      ].sort()) {
+        if (this.db.postgres)
+          await q.query("SELECT id FROM records WHERE id=$1 FOR UPDATE", [
+            memberId,
+          ]);
+        const member = await this.membership(q, owner, memberId);
+        contributionTotals.set(memberId, member.contributedKobo);
+      }
+      for (const task of p.spec)
+        if (
+          task.allocation &&
+          (task.input.kind === "ajo_cash" ||
+            task.input.kind === "ajo_contribute")
+        ) {
+          const member = await this.membership(q, owner, task.input.memberId),
+            next = allocateContribution(
+              member,
+              contributionTotals.get(member.id)!,
+              task.amountKobo,
+            );
+          if (JSON.stringify(next) !== JSON.stringify(task.allocation))
+            throw new AppError("AJO_ALLOCATION_CHANGED", 409);
+          contributionTotals.set(member.id, next.afterKobo);
+        }
       const totals = new Map<string, number>();
       for (const task of p.spec)
         if (task.source)
@@ -769,6 +834,7 @@ export class Core {
       name: string;
       dailyKobo: number;
       maturityDate: string;
+      startDate?: string;
       userId?: string;
     },
   ) {
@@ -781,13 +847,16 @@ export class Core {
     )
       throw new AppError("INVALID_MEMBER");
     if (input.userId) await this.getUser(input.userId);
+    const joinedDate = input.startDate || lagosDate();
+    contributionCapacity({ ...input, joinedDate });
     const id = randomUUID();
     await this.db.transaction(async (q) => {
       await this.put(q, id, owner, "member", {
         ...input,
         bookId,
         cashOutstandingKobo: 0,
-        joinedDate: stamp().slice(0, 10),
+        joinedDate,
+        contributedKobo: 0,
       });
       await account(q, `ajo:${id}`, owner, "member_principal");
     });
@@ -798,6 +867,7 @@ export class Core {
     invite: string,
     dailyKobo: number,
     maturityDate: string,
+    startDate = lagosDate(),
   ) {
     const rows = (
       await this.db.query("SELECT * FROM records WHERE kind='book'")
@@ -807,6 +877,7 @@ export class Core {
     );
     if (!book) throw new AppError("INVITE_NOT_FOUND");
     const user = await this.getUser(owner);
+    contributionCapacity({ joinedDate: startDate, maturityDate, dailyKobo });
     if (
       !Number.isSafeInteger(dailyKobo) ||
       dailyKobo < 100 ||
@@ -829,7 +900,8 @@ export class Core {
         maturityDate,
         bookId: book.id,
         cashOutstandingKobo: 0,
-        joinedDate: stamp().slice(0, 10),
+        joinedDate: startDate,
+        contributedKobo: 0,
       };
       await this.put(q, id, book.owner, "member", data);
       await account(q, `ajo:${id}`, book.owner, "member_principal");
@@ -962,13 +1034,42 @@ export class Core {
         }
         if (
           task.input.kind === "ajo_cash" ||
+          task.input.kind === "ajo_contribute" ||
           task.input.kind === "ajo_replace"
         ) {
+          if (this.db.postgres)
+            await q.query("SELECT id FROM records WHERE id=$1 FOR UPDATE", [
+              task.input.memberId,
+            ]);
           const member = await this.membership(
             q,
             job.owner,
             task.input.memberId,
           );
+          if (task.allocation) {
+            const actual = allocateContribution(
+              member,
+              member.contributedKobo,
+              task.amountKobo,
+            );
+            if (JSON.stringify(actual) !== JSON.stringify(task.allocation))
+              throw new AppError("AJO_ALLOCATION_CHANGED", 409);
+            await this.put(
+              q,
+              task.id + ":contribution",
+              member.organizer,
+              "contribution",
+              {
+                memberId: member.id,
+                taskId: task.id,
+                planId: p.id,
+                source: task.input.kind === "ajo_cash" ? "cash" : "wallet",
+                amountKobo: task.amountKobo,
+                allocation: actual,
+                createdAt: stamp(),
+              },
+            );
+          }
           if (task.input.kind === "ajo_cash" && task.input.sourceRow) {
             const row = await this.owned(
               q,
@@ -992,7 +1093,11 @@ export class Core {
             );
           }
           const delta =
-            task.input.kind === "ajo_cash" ? task.amountKobo : -task.amountKobo;
+            task.input.kind === "ajo_cash"
+              ? task.amountKobo
+              : task.input.kind === "ajo_replace"
+                ? -task.amountKobo
+                : 0;
           if (member.cashOutstandingKobo + delta < 0)
             throw new AppError("REPLACEMENT_EXCEEDS_CASH");
           const { id: memberId, organizer, ...data } = member;
@@ -1002,18 +1107,20 @@ export class Core {
               JSON.stringify({
                 ...data,
                 cashOutstandingKobo: member.cashOutstandingKobo + delta,
+                ...(task.allocation
+                  ? { contributedKobo: task.allocation.afterKobo }
+                  : {}),
               }),
               memberId,
             ],
           );
-          await this.put(q, task.id, job.owner, "cash_event", {
-            memberId,
-            delta,
-            date:
-              task.input.kind === "ajo_cash"
-                ? task.input.date
-                : stamp().slice(0, 10),
-          });
+          if (delta)
+            await this.put(q, task.id, job.owner, "cash_event", {
+              memberId,
+              delta,
+              date:
+                task.input.kind === "ajo_cash" ? task.input.date : lagosDate(),
+            });
         }
         if (task.source && task.amountKobo) {
           await lockAccount(q, this.db, task.source);
@@ -1040,6 +1147,8 @@ export class Core {
           ...(task.recipient ? { recipient: task.recipient } : {}),
           createdAt: stamp(),
           reference: "PW-" + task.id,
+          ...(task.allocation ? { allocation: task.allocation } : {}),
+          kind: task.input.kind,
           ...(task.input.kind === "service" &&
           task.input.productId.endsWith("prepaid")
             ? { electricityToken: outcome.token }

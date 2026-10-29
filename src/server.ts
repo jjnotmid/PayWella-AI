@@ -561,6 +561,7 @@ export function createApp(core: Core, agent: Agent, env: NodeJS.ProcessEnv) {
               invite: z.string().regex(/^[A-Za-z0-9]{8}$/),
               dailyKobo: z.number().int().min(100),
               maturityDate: z.string().date(),
+              startDate: z.string().date().optional(),
             })
             .strict()
             .parse(data);
@@ -571,6 +572,7 @@ export function createApp(core: Core, agent: Agent, env: NodeJS.ProcessEnv) {
               input.invite,
               input.dailyKobo,
               input.maturityDate,
+              input.startDate,
             ),
             201,
           );
@@ -583,6 +585,7 @@ export function createApp(core: Core, agent: Agent, env: NodeJS.ProcessEnv) {
               name: z.string().min(2).max(100),
               dailyKobo: z.number().int().min(100),
               maturityDate: z.string().date(),
+              startDate: z.string().date().optional(),
             })
             .strict()
             .parse(data);

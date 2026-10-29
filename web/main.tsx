@@ -916,6 +916,15 @@ function App() {
                       Funded {money(m.fundedKobo)} · Cash outstanding{" "}
                       {money(m.cashOutstandingKobo)}
                     </p>
+                    {m.contribution && (
+                      <p>
+                        {m.contribution.paidDays} of {m.contribution.totalDays}{" "}
+                        days covered
+                        {m.contribution.nextDate
+                          ? ` · ${money(m.contribution.nextDayRemainingKobo)} remaining for ${m.contribution.nextDate}`
+                          : " · All cycle contributions recorded"}
+                      </p>
+                    )}
                   </div>
                   <div className="inline-actions">
                     {m.userId === workspace.user.id && (
@@ -1334,6 +1343,7 @@ function PlanView({
   const [editing, setEditing] = useState(false);
   const ready = plan.status === "READY",
     running = ["RUNNING", "PENDING"].includes(plan.status),
+    cashOnly = plan.spec.every((task: Item) => task.input.kind === "ajo_cash"),
     total = plan.spec.reduce(
       (n: number, t: Item) => n + t.amountKobo + t.feeKobo,
       0,
@@ -1404,6 +1414,12 @@ function PlanView({
                   <div>
                     <strong>{t.label}</strong>
                     <p>{t.destination}</p>
+                    {t.input.kind === "ajo_replace" && (
+                      <p>
+                        Funds an existing cash collection. No additional
+                        contribution days.
+                      </p>
+                    )}
                     <span>
                       {ready
                         ? "Ready for your approval"
@@ -1430,6 +1446,7 @@ function PlanView({
                       </button>
                     )}
                   </div>
+                  {t.allocation && <AllocationDetails value={t.allocation} />}
                 </div>
               );
             })}
@@ -1437,13 +1454,15 @@ function PlanView({
           {ready && (
             <>
               <div className="review-total">
-                <span>Total task amounts</span>
+                <span>
+                  {cashOnly ? "Cash to record" : "Total task amounts"}
+                </span>
                 <strong>{money(total)}</strong>
               </div>
               <p className="review-note">
-                Includes all reviewed task amounts. Savings withdrawals move
-                money back to your wallet. Confirm the individual directions
-                above.
+                {cashOnly
+                  ? "No wallet debit. This records cash collected, not bank-settled savings."
+                  : "Includes all reviewed task amounts. Check each direction above. Cash records do not debit your wallet; savings withdrawals return funds to it."}
               </p>
               <button
                 type="button"
@@ -1648,6 +1667,7 @@ function TaskForm({ type, w, close, add, save, busy }: any) {
               invite: String(data.invite).trim(),
               dailyKobo: amountKobo,
               maturityDate: data.maturityDate,
+              startDate: data.startDate,
             });
             return;
           }
@@ -1657,6 +1677,7 @@ function TaskForm({ type, w, close, add, save, busy }: any) {
               name: data.name,
               dailyKobo: amountKobo,
               maturityDate: data.maturityDate,
+              startDate: data.startDate,
             });
             return;
           }
@@ -1845,6 +1866,19 @@ function TaskForm({ type, w, close, add, save, busy }: any) {
         )}
         {(kind === "ajo_join" || kind === "ajo_member") && (
           <label>
+            First contribution date
+            <input
+              name="startDate"
+              type="date"
+              defaultValue={new Date(Date.now() + 3600000)
+                .toISOString()
+                .slice(0, 10)}
+              required
+            />
+          </label>
+        )}
+        {(kind === "ajo_join" || kind === "ajo_member") && (
+          <label>
             Agreed payout date
             <input
               name="maturityDate"
@@ -1913,7 +1947,11 @@ function Receipt({
           <span className="receipt-check">
             <Check size={26} />
           </span>
-          <p>Successfully completed</p>
+          <p>
+            {r.kind === "ajo_cash"
+              ? "Cash recorded successfully"
+              : "Successfully completed"}
+          </p>
           <h2>{money(r.amountKobo)}</h2>
           <span>{r.label}</span>
         </div>
@@ -1939,6 +1977,7 @@ function Receipt({
             </div>
           ))}
         </div>
+        {r.allocation && <AllocationDetails value={r.allocation} />}
         <a className="primary" href={"/api/receipts/" + r.id + ".pdf"} download>
           <Download size={17} />
           Download receipt
@@ -2002,6 +2041,41 @@ function Receipt({
         </small>
       </div>
     </Modal>
+  );
+}
+
+function AllocationDetails({ value }: { value: Item }) {
+  const periods = value.periods as {
+      date: string;
+      amountKobo: number;
+      remainingKobo: number;
+    }[],
+    first = periods[0],
+    last = periods.at(-1);
+  if (!first || !last) return null;
+  return (
+    <details className="allocation-details">
+      <summary>
+        {first.date === last.date
+          ? first.date
+          : `${first.date} to ${last.date}`}
+        {` · ${periods.length} ${periods.length === 1 ? "date" : "dates"}`}
+      </summary>
+      <ul>
+        {periods.map((period) => (
+          <li key={period.date}>
+            <span>{period.date}</span>
+            <span>
+              {money(period.amountKobo)}
+              {period.remainingKobo
+                ? ` · ${money(period.remainingKobo)} still due`
+                : " · Day covered"}
+            </span>
+          </li>
+        ))}
+      </ul>
+      <p>Collection dates are separate from confirmed bank funding.</p>
+    </details>
   );
 }
 createRoot(document.getElementById("root")!).render(<App />);

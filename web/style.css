@@ -1117,6 +1117,7 @@ input:disabled {
 }
 .plan-task {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 14px;
   padding: 20px 0;
@@ -1163,6 +1164,15 @@ input:disabled {
 }
 .task-right .text-button {
   font-size: 10px;
+}
+.plan-task > .allocation-details {
+  flex-basis: 100%;
+  width: 100%;
+  margin: 0 0 0 4px;
+}
+.plan-task .allocation-details span {
+  font-size: 12px;
+  color: var(--ink);
 }
 .review-total {
   display: flex;
@@ -1863,4 +1873,35 @@ input:disabled {
     transition: none !important;
     scroll-behavior: auto !important;
   }
+}
+:root .allocation-details {
+  margin: 10px 0;
+  padding: 10px 12px;
+  border-left: 2px solid var(--gold);
+  color: var(--ink);
+  font-size: 0.85rem;
+  text-align: left;
+}
+.allocation-details summary {
+  cursor: pointer;
+  line-height: 1.5;
+}
+.allocation-details ul {
+  list-style: none;
+  padding: 0;
+  margin: 10px 0;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.allocation-details li {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--line);
+}
+.allocation-details p {
+  font-size: 0.8rem;
+  line-height: 1.5;
 }

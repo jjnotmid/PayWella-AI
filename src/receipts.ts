@@ -20,11 +20,26 @@ export function receiptPdf(receipt: Row): Promise<Buffer> {
         fit: [145, 55],
       },
     );
-    doc.fillColor("#082F27").fontSize(10).text("PAYMENT RECEIPT", 32, 90);
+    doc
+      .fillColor("#082F27")
+      .fontSize(10)
+      .text(
+        receipt.kind === "ajo_cash"
+          ? "CASH COLLECTION RECORD"
+          : "PAYMENT RECEIPT",
+        32,
+        90,
+      );
     doc
       .fillColor("#082F27")
       .fontSize(15)
-      .text("Successfully completed", 32, 140);
+      .text(
+        receipt.kind === "ajo_cash"
+          ? "Cash recorded successfully"
+          : "Successfully completed",
+        32,
+        140,
+      );
     doc
       .fontSize(29)
       .text(naira(receipt.amountKobo).replace("₦", "NGN "), 32, 175);
@@ -41,6 +56,16 @@ export function receiptPdf(receipt: Row): Promise<Buffer> {
       ["Fee", naira(receipt.feeKobo).replace("₦", "NGN ")],
       ["Date", new Date(receipt.createdAt).toUTCString()],
       ["Reference", receipt.reference],
+      ...(receipt.allocation
+        ? receipt.allocation.periods.map((period: any) => [
+            period.date,
+            naira(period.amountKobo).replace("₦", "NGN ") +
+              (period.remainingKobo
+                ? "; still due " +
+                  naira(period.remainingKobo).replace("₦", "NGN ")
+                : "; day covered"),
+          ])
+        : []),
       ...(receipt.electricityToken
         ? [["Electricity token", receipt.electricityToken]]
         : []),

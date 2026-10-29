@@ -1,4 +1,12 @@
 export const errors: Record<string, string> = {
+  INVALID_AJO_PERIOD:
+    "Choose valid contribution dates, from the start through the payout date, within one year.",
+  AJO_CYCLE_EXCEEDED:
+    "This amount is more than the remaining contributions for this cycle. Reduce it or agree a new cycle first.",
+  AJO_ALLOCATION_CHANGED:
+    "Another contribution changed the days covered. Prepare a fresh review so you can approve the correct dates. This task was not charged.",
+  AJO_RECORD_REVIEW_REQUIRED:
+    "This older collection book needs its contribution history checked before dated payments can be added. Its funds have not changed.",
   REQUEST_EXPIRED:
     "This unfinished request is more than 24 hours old. Send a new request. Your completed transactions are unchanged.",
   INVALID_METER_NUMBER:

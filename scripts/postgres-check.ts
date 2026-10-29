@@ -97,8 +97,53 @@ try {
   const today = new Date().toISOString().slice(0, 10),
     current = await core.statement(owner, today.slice(0, 4) + "-01-01", today);
   assert.equal(current.closingKobo, 49250000);
+  await db.query("UPDATE users SET organizer=1 WHERE id=$1", [owner]);
+  const saver = await core.userForPhone("2348000000002");
+  await core.setup(saver, "Bisi Example", "4321");
+  const book = await core.createBook(owner, "PostgreSQL collection check"),
+    member = await core.joinBook(
+      saver,
+      book.invite,
+      20000,
+      "2026-12-31",
+      "2026-01-01",
+    ),
+    cash = await core.prepare(owner, {
+      tasks: [
+        {
+          kind: "ajo_cash",
+          memberId: member.id,
+          amountKobo: 10000,
+          date: "2026-10-27",
+        },
+      ],
+    }),
+    digital = await core.prepare(saver, {
+      tasks: [
+        { kind: "ajo_contribute", memberId: member.id, amountKobo: 20000 },
+      ],
+    });
+  await Promise.all([
+    core.approve(owner, cash.plan.id, 1, "1234"),
+    core.approve(saver, digital.plan.id, 1, "4321"),
+  ]);
+  await Promise.all([core.drain(), core.drain()]);
+  const outcomes = await Promise.all([
+    core.plan(owner, cash.plan.id),
+    core.plan(saver, digital.plan.id),
+  ]);
+  assert.deepEqual(outcomes.map((plan) => plan.status).sort(), [
+    "FAILED",
+    "SUCCEEDED",
+  ]);
+  const collection = (await core.workspace(saver)).members[0];
+  assert.equal(
+    collection.contribution.contributedKobo,
+    collection.fundedKobo + collection.cashOutstandingKobo,
+  );
+  assert.equal((await core.records(owner, "contribution")).length, 1);
   process.stdout.write(
-    "PostgreSQL checks passed: concurrent approval, parallel settlement, revisions, statements, RLS and immutable ledger.\n",
+    "PostgreSQL checks passed: concurrent approval, parallel settlement, revisions, statements, Ajo allocation races, RLS and immutable ledger.\n",
   );
 } finally {
   await db?.close();

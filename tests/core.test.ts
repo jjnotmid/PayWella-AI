@@ -271,6 +271,7 @@ test("cash is an organizer liability, not funded principal; members choose disti
         name: "Tunde Example",
         dailyKobo: 20000,
         maturityDate: "2026-10-01",
+        startDate: "2026-09-01",
       });
     const cash = await core.prepare(owner, {
       tasks: [

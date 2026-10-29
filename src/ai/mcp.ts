@@ -89,10 +89,23 @@ export async function connectTools(
           invite: z.string().regex(/^[A-Za-z0-9]{8}$/),
           dailyKobo: z.number().int().min(100).max(100000000),
           maturityDate: z.string().date(),
+          startDate: z
+            .string()
+            .date()
+            .optional()
+            .describe(
+              "Agreed first contribution date. Omit for today; ask for the actual start when importing an existing book.",
+            ),
         })
         .strict(),
       run: (args: any) =>
-        core.joinBook(owner, args.invite, args.dailyKobo, args.maturityDate),
+        core.joinBook(
+          owner,
+          args.invite,
+          args.dailyKobo,
+          args.maturityDate,
+          args.startDate,
+        ),
     },
     {
       name: "add_ajo_member",
@@ -104,6 +117,7 @@ export async function connectTools(
           name: z.string().min(2).max(100),
           dailyKobo: z.number().int().min(100).max(100000000),
           maturityDate: z.string().date(),
+          startDate: z.string().date().optional(),
         })
         .strict(),
       run: (args: any) =>
@@ -111,6 +125,7 @@ export async function connectTools(
           name: args.name,
           dailyKobo: args.dailyKobo,
           maturityDate: args.maturityDate,
+          startDate: args.startDate,
         }),
     },
     {
@@ -166,7 +181,7 @@ export async function connectTools(
     {
       name: "get_ajo_books",
       description:
-        "Read this organizer’s collection books and members, outstanding cash and funded principal. Cash held is not bank money.",
+        "Read owned collection books and memberships, daily contribution rates, covered days, partial-day shortfalls, remaining cycle contributions, outstanding cash and funded principal. Cash held is not bank money.",
       schema: empty,
       run: async () => {
         const w = await core.workspace(owner);

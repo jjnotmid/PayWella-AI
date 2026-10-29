@@ -11,6 +11,7 @@ Node.js 24, TypeScript, React and PostgreSQL. Local development uses SQLite; hos
 - Bank and PayWella transfers, airtime, data, prepaid electricity, savings creation/deposit/withdrawal, and individual Ajo cash/funding/payout records using sandbox financial adapters.
 - An editable private review, one four-digit PIN approval, aggregate balance reservations, bounded parallel workers and durable pending-payment reconciliation.
 - Handwritten-ledger candidates with explicit member matching and human review. Recording collected cash creates an organizer liability, never a bank-funded balance.
+- Ajo contributions cover the oldest unpaid dates, including partial days and advance days within the agreed cycle. Reviews and receipts preserve the exact allocation; replacing collected cash does not count those days twice.
 - Automatic grouped receipts, recipient copies of internal payments, PNG/PDF receipts, PDF statements and saved bank recipients.
 - A responsive web companion with light, dark and device appearance settings.
 
@@ -58,6 +59,8 @@ Hosted organizer access is an operator action: after an account is opened, `npm 
 Private plans expire after five minutes. One four-digit PIN approval covers the reviewed revision. The model can read and prepare through MCP; it has no payment-execution tool.
 
 An accepted request is not a completed payment. Provider uncertainty retains the reservation and reconciles the existing reference. Independent tasks can complete separately; receipts describe settled tasks only. Editing invalidates the earlier review. Notifications run independently and cannot turn a settled task into a PIN error.
+
+An Ajo cycle has an agreed first date, payout date and member-specific daily amount, bounded to one year in this release. Amounts beyond the remaining cycle are rejected rather than becoming undisclosed fees or an automatic new cycle. Concurrent contributions that change a reviewed date allocation require a fresh review. Older member records without dated contribution evidence remain blocked from new dated collections until their history is reconciled; existing funded balances are not rewritten. Cycle fee agreements and recurring savings schedules remain outside the implemented journeys.
 
 Capability links are exchanged for HttpOnly, SameSite cookies and removed from the address bar. Web mutations require the configured origin. Owner access is enforced below the model. Conversation, reply, progress and extracted-media state is encrypted and expires after 24 hours; financial evidence remains separate. No raw downloaded image/audio is persisted. Supabase public tables have RLS enabled and anonymous/authenticated browser-role grants revoked; database credentials belong only on the server.
 

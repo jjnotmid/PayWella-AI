@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { ContributionAllocation } from "./ajo-allocation.ts";
 export class AppError extends Error {
   code: string;
   status: number;
@@ -103,6 +104,7 @@ export type QuotedTask = {
   feeKobo: number;
   goalId?: string;
   dependsOn: number[];
+  allocation?: ContributionAllocation;
   recipient?: {
     name: string;
     bankName: string;
