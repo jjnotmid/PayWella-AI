@@ -101,7 +101,16 @@ export function receiptImage(receipt: Row) {
               "#657469",
             )
           : "")
-      : "";
+      : receipt.grossAmountKobo !== undefined
+        ? text(
+            "Principal before organizer fee",
+            85,
+            noteTitleY,
+            22,
+            400,
+            "#657469",
+          ) + text(naira(receipt.grossAmountKobo), 85, noteValueY, 30, 600)
+        : "";
   const detailsY = Math.max(790, (extra ? noteEndY : destinationBottom) + 36),
     height = detailsY + 710;
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="${height}" viewBox="0 0 1080 ${height}"><rect width="1080" height="${height}" fill="#082F27"/><rect x="36" y="36" width="1008" height="${height - 72}" rx="42" fill="#FFFAF3"/><image href="data:image/png;base64,${logo}" x="85" y="75" width="285" height="100"/><g font-family="Manrope">${text(receipt.kind === "ajo_cash" ? "COLLECTION RECORD" : "PAYMENT RECORD", 995, 130, 19, 600, "#657469", "end")}<path d="M88 225H992" stroke="#DFE5D7"/><circle cx="110" cy="290" r="23" fill="#DCEA9B"/><path d="m98 290 9 9 16-19" fill="none" stroke="#082F27" stroke-width="3"/>${text(receipt.kind === "ajo_cash" ? "Cash recorded successfully" : "Successfully completed", 151, 300, 25, 600)}${text("Amount", 85, 390, 25, 400, "#657469")}${text(naira(receipt.amountKobo), 85, 485, 76, 600)}${text(receipt.label, 85, 570, 27, 600)}${destination

@@ -139,6 +139,7 @@ test("a reviewed notebook row creates one cash liability and cannot be recorded 
     await db.query("UPDATE users SET organizer=1 WHERE id=$1", [owner]);
     const book = await core.createBook(owner, "Market"),
       member = await core.addMember(owner, book.id, {
+        consentConfirmed: true,
         name: "Tunde Example",
         dailyKobo: 20000,
         maturityDate: "2027-01-01",
@@ -268,6 +269,7 @@ test("cash is an organizer liability, not funded principal; members choose disti
     await db.query("UPDATE users SET organizer=1 WHERE id=$1", [owner]);
     const book = await core.createBook(owner, "Market savers"),
       member = await core.addMember(owner, book.id, {
+        consentConfirmed: true,
         name: "Tunde Example",
         dailyKobo: 20000,
         maturityDate: "2026-10-01",
@@ -302,8 +304,22 @@ test("cash is an organizer liability, not funded principal; members choose disti
     );
     const other = await core.userForPhone("2348000000002");
     await core.setup(other, "Bisi Example", "4321");
-    const a = await core.joinBook(other, book.invite, 50000, "2026-12-01"),
-      b = await core.joinBook(other, book.invite, 50000, "2026-12-01");
+    const a = await core.joinBook(
+        other,
+        book.invite,
+        50000,
+        "2026-12-01",
+        undefined,
+        { termsVersion: 1, consent: true },
+      ),
+      b = await core.joinBook(
+        other,
+        book.invite,
+        50000,
+        "2026-12-01",
+        undefined,
+        { termsVersion: 1, consent: true },
+      );
     assert.equal(a.id, b.id);
     assert.equal(a.dailyKobo, 50000);
     const receiptId = (await core.workspace(owner)).receipts[0].id;

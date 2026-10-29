@@ -51,6 +51,7 @@ async function fixture() {
       20000,
       "2026-11-05",
       "2026-10-20",
+      { termsVersion: 1, consent: true },
     );
   return { db, core, organizer, saver, member };
 }

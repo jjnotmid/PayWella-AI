@@ -362,6 +362,19 @@ export class Worker {
             job.id,
             progress,
           );
+        if (reply.membershipProposal) {
+          const capability = await createCapability(
+            this.core.db,
+            job.owner,
+            "workspace",
+          );
+          reply.url =
+            this.env.PUBLIC_ORIGIN +
+            "/open?view=ajo&joinRequest=" +
+            reply.membershipProposal +
+            "#" +
+            capability;
+        }
         if (reply.prepared) {
           const p = reply.prepared.plan;
           reply.text = planMessage(p, user.language);

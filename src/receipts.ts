@@ -53,7 +53,15 @@ export function receiptPdf(receipt: Row): Promise<Buffer> {
           ]
         : [["To", receipt.destination || "Your savings"]]),
       ["Status", receipt.status],
-      ["Fee", naira(receipt.feeKobo).replace("₦", "NGN ")],
+      [receipt.feeLabel || "Fee", naira(receipt.feeKobo).replace("₦", "NGN ")],
+      ...(receipt.grossAmountKobo !== undefined
+        ? [
+            [
+              "Principal before fee",
+              naira(receipt.grossAmountKobo).replace("₦", "NGN "),
+            ],
+          ]
+        : []),
       ["Date", new Date(receipt.createdAt).toUTCString()],
       ["Reference", receipt.reference],
       ...(receipt.allocation

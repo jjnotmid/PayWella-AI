@@ -16,6 +16,7 @@ import { banks, products } from "./providers/sandbox.ts";
 import { statementPdf } from "./statements.ts";
 import { messageControl, whatsappCopy } from "./whatsapp-ui.ts";
 import { recordDelivery, deliveryStatuses } from "./whatsapp-delivery.ts";
+import { FeePolicy, Agreement } from "./ajo-terms.ts";
 
 type Session = {
   owner: string;
@@ -588,10 +589,59 @@ export function createApp(core: Core, agent: Agent, env: NodeJS.ProcessEnv) {
         if (method === "POST" && path === "/api/ajo/books") {
           workspace(s);
           const input = z
-            .object({ name: z.string().min(1).max(60) })
+            .object({
+              name: z.string().min(1).max(60),
+              feePolicy: FeePolicy,
+              rules: z.string().trim().min(1).max(500).optional(),
+            })
             .strict()
             .parse(data);
-          return json(res, await core.createBook(s.owner, input.name), 201);
+          return json(
+            res,
+            await core.createBook(s.owner, input.name, input),
+            201,
+          );
+        }
+        if (method === "GET" && path === "/api/ajo/invitation") {
+          workspace(s);
+          return json(
+            res,
+            await core.previewInvitation(
+              s.owner,
+              url.searchParams.get("code") || "",
+            ),
+          );
+        }
+        const invitationChange = path.match(
+          /^\/api\/ajo\/books\/([^/]+)\/invitation$/,
+        );
+        if (method === "POST" && invitationChange) {
+          workspace(s);
+          const input = z
+            .object({ action: z.enum(["rotate", "revoke"]) })
+            .strict()
+            .parse(data);
+          return json(
+            res,
+            await core.changeInvitation(
+              s.owner,
+              uuid.parse(invitationChange[1]),
+              input.action,
+            ),
+          );
+        }
+        const membershipProposal = path.match(
+          /^\/api\/ajo\/proposals\/([^/]+)$/,
+        );
+        if (method === "GET" && membershipProposal) {
+          workspace(s);
+          return json(
+            res,
+            await core.membershipProposal(
+              s.owner,
+              uuid.parse(membershipProposal[1]),
+            ),
+          );
         }
         if (method === "POST" && path === "/api/ajo/join") {
           workspace(s);
@@ -601,6 +651,8 @@ export function createApp(core: Core, agent: Agent, env: NodeJS.ProcessEnv) {
               dailyKobo: z.number().int().min(100),
               maturityDate: z.string().date(),
               startDate: z.string().date().optional(),
+              termsVersion: z.number().int().positive(),
+              consent: z.literal(true),
             })
             .strict()
             .parse(data);
@@ -612,6 +664,10 @@ export function createApp(core: Core, agent: Agent, env: NodeJS.ProcessEnv) {
               input.dailyKobo,
               input.maturityDate,
               input.startDate,
+              Agreement.parse({
+                termsVersion: input.termsVersion,
+                consent: input.consent,
+              }),
             ),
             201,
           );
@@ -625,6 +681,7 @@ export function createApp(core: Core, agent: Agent, env: NodeJS.ProcessEnv) {
               dailyKobo: z.number().int().min(100),
               maturityDate: z.string().date(),
               startDate: z.string().date().optional(),
+              consentConfirmed: z.literal(true),
             })
             .strict()
             .parse(data);

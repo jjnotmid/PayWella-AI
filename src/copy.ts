@@ -1,4 +1,30 @@
 export const errors: Record<string, string> = {
+  AJO_FEE_TOO_HIGH:
+    "Choose a lower cycle fee so it can fit within one reviewed payout and still leave money for the saver.",
+  AJO_ALREADY_JOINED:
+    "You already belong to this book with a different contribution agreement. Your existing amount and payout date have not changed.",
+  INVITE_REVOKED:
+    "Your organizer has withdrawn this invitation. Ask them for a new one. Existing contributions are unchanged.",
+  INVITE_EXPIRED:
+    "This invitation has expired. Ask your organizer for a fresh invitation.",
+  AJO_CONSENT_REQUIRED:
+    "Review the contribution rules and cycle fee, then confirm that you agree before joining.",
+  AJO_TERMS_CHANGED:
+    "These collection terms changed. Check the latest invitation before agreeing.",
+  AJO_TERMS_REVIEW_REQUIRED:
+    "The organizer needs to refresh this book’s invitation and rules before new savers can join.",
+  AJO_FEE_EXCEEDS_CYCLE:
+    "This cycle fee would use all the planned contributions. Agree a lower fee or a longer cycle first.",
+  AJO_PAYOUT_TOO_SMALL:
+    "This payout is too small to cover the agreed cycle fee. Choose a larger principal amount so the saver receives money.",
+  AJO_PAYOUT_CHANGED:
+    "A previous payout changed the fee still due. Prepare a fresh payout review. This task was not charged.",
+  AJO_PRIVATE_JOIN_REQUIRED:
+    "The saver must review and accept their membership privately. An organizer cannot link another person’s account for them.",
+  AI_MEMBERSHIP_FIRST:
+    "Review and accept the Ajo membership first, then prepare its contribution. Your other requested details are still saved.",
+  AJO_RULES_INVALID:
+    "Add clear collection rules using no more than 500 characters.",
   INVALID_AJO_PERIOD:
     "Choose valid contribution dates, from the start through the payout date, within one year.",
   AJO_CYCLE_EXCEEDED:

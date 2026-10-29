@@ -31,6 +31,7 @@ import "./style.css";
 import { ImportReview } from "./import-review.js";
 import { PlanEditor } from "./plan-editor.js";
 import { TaskProgress } from "./task-progress.js";
+import { AjoJoin, AgreementCheck, feeDescription } from "./ajo-join.js";
 
 type Item = Record<string, any>;
 type Plan = Item & {
@@ -93,6 +94,10 @@ function App() {
     [reply, setReply] = useState(""),
     [assistantBusy, setAssistantBusy] = useState(false);
   const [whatsappNumber, setWhatsAppNumber] = useState<string | null>(null);
+  const [joinContext, setJoinContext] = useState<{
+    invite: string;
+    proposalId: string | null;
+  }>({ invite: "", proposalId: null });
   const [pendingRequest, setPendingRequest] = useState<string | null>(null),
     [assistantProgress, setAssistantProgress] = useState<Item | null>(null);
   const lock = useRef(false),
@@ -118,6 +123,16 @@ function App() {
     const requestedView = new URLSearchParams(window.location.search).get(
       "view",
     );
+    const query = new URLSearchParams(window.location.search),
+      invite = query.get("join") || "",
+      proposalId = query.get("joinRequest");
+    const joining =
+      /^[A-Za-z0-9]{8}$/.test(invite) || !!proposalId?.match(/^[a-f0-9-]{36}$/);
+    if (joining)
+      setJoinContext({
+        invite: /^[A-Za-z0-9]{8}$/.test(invite) ? invite : "",
+        proposalId,
+      });
     if (
       requestedView &&
       ["home", "savings", "ajo", "history", "settings"].includes(requestedView)
@@ -140,6 +155,10 @@ function App() {
         if (!mounted) return;
         setSession(s);
         if (s.purpose === "workspace") {
+          if (joining) {
+            setPage("ajo");
+            setForm("ajo_join");
+          }
           try {
             const pending = JSON.parse(
               sessionStorage.getItem("pw-request") || "null",
@@ -410,7 +429,16 @@ function App() {
           {whatsappNumber && (
             <a
               className="primary"
-              href={"https://wa.me/" + whatsappNumber + "?text=Hi"}
+              href={
+                "https://wa.me/" +
+                whatsappNumber +
+                "?text=" +
+                encodeURIComponent(
+                  joinContext.invite
+                    ? "I want to join Ajo with invitation " + joinContext.invite
+                    : "Hi",
+                )
+              }
             >
               Open PayWella on WhatsApp
               <ArrowUpRight size={18} />
@@ -888,19 +916,57 @@ function App() {
               {workspace.books.map((b: Item) => (
                 <section className="book" key={b.id}>
                   <h3>{b.name}</h3>
+                  <p>{feeDescription(b.feePolicy)}</p>
                   <div className="book-footer">
-                    <span>Invitation: {b.invite}</span>
+                    <span>
+                      {b.inviteRevokedAt
+                        ? "Invitation revoked"
+                        : `Invitation: ${b.invite}`}
+                    </span>
                     <button
                       className="icon-button"
                       aria-label="Copy invitation"
+                      disabled={!!b.inviteRevokedAt}
                       onClick={() => {
                         navigator.clipboard
-                          .writeText(b.invite)
+                          .writeText(
+                            window.location.origin + "/?join=" + b.invite,
+                          )
                           .catch(showError);
                       }}
                     >
                       <Copy size={18} />
                     </button>
+                    <button
+                      className="text-button"
+                      disabled={busy}
+                      onClick={() =>
+                        void guarded(async () => {
+                          await api("ajo/books/" + b.id + "/invitation", {
+                            action: "rotate",
+                          });
+                          await refresh();
+                        })
+                      }
+                    >
+                      New invitation
+                    </button>
+                    {!b.inviteRevokedAt && (
+                      <button
+                        className="text-button"
+                        disabled={busy}
+                        onClick={() =>
+                          void guarded(async () => {
+                            await api("ajo/books/" + b.id + "/invitation", {
+                              action: "revoke",
+                            });
+                            await refresh();
+                          })
+                        }
+                      >
+                        Revoke invitation
+                      </button>
+                    )}
                     <button
                       className="text-button"
                       onClick={() => setForm("ajo_member:" + b.id)}
@@ -921,6 +987,10 @@ function App() {
                     <p>
                       Funded {money(m.fundedKobo)} · Cash outstanding{" "}
                       {money(m.cashOutstandingKobo)}
+                    </p>
+                    <p>
+                      Cycle fee {money(m.agreedFeeKobo || 0)} · Fee already
+                      taken {money(m.feePaidKobo || 0)}
                     </p>
                     {m.contribution && (
                       <p>
@@ -1068,7 +1138,21 @@ function App() {
           </div>
         </Modal>
       )}
-      {form && form !== "funding" && workspace && (
+      {form === "ajo_join" && workspace && (
+        <Modal label="Join a collection book" close={() => setForm("")}>
+          <AjoJoin
+            invite={joinContext.invite}
+            proposalId={joinContext.proposalId}
+            submit={async (data) => {
+              await api("ajo/join", data);
+              await refresh();
+              setForm("");
+              setJoinContext({ invite: "", proposalId: null });
+            }}
+          />
+        </Modal>
+      )}
+      {form && form !== "funding" && form !== "ajo_join" && workspace && (
         <TaskForm
           type={form}
           w={workspace}
@@ -1082,6 +1166,7 @@ function App() {
             });
           }}
           busy={busy}
+          error={error}
         />
       )}
       {receipt && (
@@ -1420,6 +1505,13 @@ function PlanView({
                   <div>
                     <strong>{t.label}</strong>
                     <p>{t.destination}</p>
+                    {t.input.kind === "ajo_payout" && (
+                      <p>
+                        Principal {money(t.amountKobo + t.feeKobo)} · Organizer
+                        fee {money(t.feeKobo)} · Saver receives{" "}
+                        {money(t.amountKobo)}
+                      </p>
+                    )}
                     {t.input.kind === "ajo_replace" && (
                       <p>
                         Funds an existing cash collection. No additional
@@ -1624,12 +1716,13 @@ function Modal({
     </div>
   );
 }
-function TaskForm({ type, w, close, add, save, busy }: any) {
+function TaskForm({ type, w, close, add, save, busy, error }: any) {
   const [kind, id] = type.split(":"),
     [selected, setSelected] = useState(w.products[0].id);
   const [bankCode, setBankCode] = useState(""),
     [accountNumber, setAccountNumber] = useState(""),
     [beneficiary, setBeneficiary] = useState("");
+  const [feeKind, setFeeKind] = useState("none");
   const product = w.products.find((p: Item) => p.id === selected);
   const title: Record<string, string> = {
     bank_transfer: "Send to a bank",
@@ -1665,15 +1758,18 @@ function TaskForm({ type, w, close, add, save, busy }: any) {
           const data = Object.fromEntries(new FormData(e.currentTarget)),
             amountKobo = Math.round(Number(data.amount) * 100);
           if (kind === "ajo_book") {
-            void save("ajo/books", { name: data.name });
-            return;
-          }
-          if (kind === "ajo_join") {
-            void save("ajo/join", {
-              invite: String(data.invite).trim(),
-              dailyKobo: amountKobo,
-              maturityDate: data.maturityDate,
-              startDate: data.startDate,
+            void save("ajo/books", {
+              name: data.name,
+              feePolicy:
+                feeKind === "fixed"
+                  ? {
+                      kind: "fixed",
+                      amountKobo: Math.round(Number(data.feeAmount) * 100),
+                    }
+                  : { kind: feeKind },
+              ...(String(data.rules || "").trim()
+                ? { rules: String(data.rules).trim() }
+                : {}),
             });
             return;
           }
@@ -1684,6 +1780,7 @@ function TaskForm({ type, w, close, add, save, busy }: any) {
               dailyKobo: amountKobo,
               maturityDate: data.maturityDate,
               startDate: data.startDate,
+              consentConfirmed: data.consentConfirmed === "on",
             });
             return;
           }
@@ -1721,6 +1818,42 @@ function TaskForm({ type, w, close, add, save, busy }: any) {
                 : "Collection book name"}
             <input name="name" required maxLength={60} />
           </label>
+        )}
+        {kind === "ajo_book" && (
+          <>
+            <label>
+              Organizer fee per cycle
+              <select
+                value={feeKind}
+                onChange={(event) => setFeeKind(event.target.value)}
+              >
+                <option value="none">No fee</option>
+                <option value="one_day">One daily contribution</option>
+                <option value="fixed">Fixed amount</option>
+              </select>
+            </label>
+            {feeKind === "fixed" && (
+              <label>
+                Fixed cycle fee (₦)
+                <input
+                  name="feeAmount"
+                  type="number"
+                  min="1"
+                  max="1000000"
+                  step="0.01"
+                  required
+                />
+              </label>
+            )}
+            <label>
+              Additional rules (optional)
+              <input name="rules" maxLength={500} />
+            </label>
+            <p className="review-note">
+              The fee is disclosed before a saver joins and deducted once from
+              the first payout. Changing terms requires a new cycle.
+            </p>
+          </>
         )}
         {kind === "bank_transfer" && (
           <>
@@ -1845,7 +1978,9 @@ function TaskForm({ type, w, close, add, save, busy }: any) {
           <label>
             {kind === "ajo_join" || kind === "ajo_member"
               ? "Daily contribution (₦)"
-              : "Amount (₦)"}
+              : kind === "ajo_payout"
+                ? "Principal to pay out (₦)"
+                : "Amount (₦)"}
             <input
               key={selected}
               name="amount"
@@ -1905,6 +2040,24 @@ function TaskForm({ type, w, close, add, save, busy }: any) {
               required
             />
           </label>
+        )}
+        {kind === "ajo_member" && (
+          <>
+            <p>
+              {feeDescription(
+                w.books.find((book: Item) => book.id === id)?.feePolicy,
+              )}
+            </p>
+            <AgreementCheck name="consentConfirmed">
+              I confirm this saver agreed to the collection rules, their daily
+              amount, payout date and cycle fee. I am recording their consent.
+            </AgreementCheck>
+          </>
+        )}
+        {error && (
+          <div className="error-box" role="alert">
+            <span>{error}</span>
+          </div>
         )}
         <button className="primary" disabled={busy}>
           {busy ? (
@@ -1970,7 +2123,10 @@ function Receipt({
                   ["Account number", r.recipient.accountNumber],
                 ]
               : [["To", r.destination || "Your savings"]]),
-            ["Fee", money(r.feeKobo)],
+            [r.feeLabel || "Fee", money(r.feeKobo)],
+            ...(r.grossAmountKobo !== undefined
+              ? [["Principal paid out", money(r.grossAmountKobo)]]
+              : []),
             ["Date", new Date(r.createdAt).toLocaleString("en-NG")],
             ["Reference", r.reference],
             ...(r.electricityToken

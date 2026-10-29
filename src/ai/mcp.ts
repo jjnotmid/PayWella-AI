@@ -11,6 +11,7 @@ import { PlanInput, AppError, naira } from "../contracts.ts";
 import type { PreparationProgress } from "../contracts.ts";
 import { available } from "../ledger.ts";
 import type { ToolSpec } from "./model.ts";
+import { FeePolicy } from "../ajo-terms.ts";
 const empty = z.object({}).strict();
 const readOnlyTools = new Set([
   "get_balance",
@@ -26,6 +27,7 @@ const readOnlyTools = new Set([
   "get_statement_summary",
   "check_affordability",
   "get_notification_status",
+  "preview_ajo_invitation",
 ]);
 export async function connectTools(
   core: Core,
@@ -34,6 +36,7 @@ export async function connectTools(
   requestKey: string | null = null,
   onClear: () => void = () => {},
   progress: (value: PreparationProgress) => Promise<void> = async () => {},
+  onMembershipProposal: (id: string) => void = () => {},
 ) {
   await core.getUser(owner);
   const registry = [
@@ -177,13 +180,41 @@ export async function connectTools(
       name: "create_ajo_book",
       description:
         "Create an explicitly requested individual thrift collection book. Only an approved organizer can use this. No money moves.",
-      schema: z.object({ name: z.string().trim().min(1).max(60) }).strict(),
-      run: (args: any) => core.createBook(owner, args.name),
+      schema: z
+        .object({
+          name: z.string().trim().min(1).max(60),
+          feePolicy: FeePolicy,
+          rules: z.string().trim().min(1).max(500).optional(),
+        })
+        .strict(),
+      run: (args: any) => core.createBook(owner, args.name, args),
+    },
+    {
+      name: "preview_ajo_invitation",
+      description:
+        "Read an invitation's organizer name, daily-thrift rules, expiry and cycle fee before proposing membership. This never exposes other savers or joins the book.",
+      schema: z
+        .object({ invite: z.string().regex(/^[A-Za-z0-9]{8}$/) })
+        .strict(),
+      run: (args: any) => core.previewInvitation(owner, args.invite),
+    },
+    {
+      name: "change_ajo_invitation",
+      description:
+        "Revoke or replace an invitation for an owned collection book only when explicitly requested. Existing member agreements and funds stay intact.",
+      schema: z
+        .object({
+          bookId: z.string().uuid(),
+          action: z.enum(["rotate", "revoke"]),
+        })
+        .strict(),
+      run: (args: any) =>
+        core.changeInvitation(owner, args.bookId, args.action),
     },
     {
       name: "join_ajo_book",
       description:
-        "Join a book with the customer’s supplied invitation, chosen daily contribution and agreed payout date. Never choose those terms for them. No funds move.",
+        "Prepare a private membership agreement using the supplied invitation, chosen daily amount and payout date. This does NOT join or accept fees: the customer must review and accept privately. Finish membership before preparing a new member contribution. Never choose their terms.",
       schema: z
         .object({
           invite: z.string().regex(/^[A-Za-z0-9]{8}$/),
@@ -198,14 +229,16 @@ export async function connectTools(
             ),
         })
         .strict(),
-      run: (args: any) =>
-        core.joinBook(
-          owner,
-          args.invite,
-          args.dailyKobo,
-          args.maturityDate,
-          args.startDate,
-        ),
+      run: async (args: any) => {
+        const proposal = await core.proposeMembership(owner, args);
+        onMembershipProposal(proposal.id);
+        return {
+          proposalId: proposal.id,
+          privateAgreementRequired: true,
+          book: proposal.book,
+          membershipCreated: false,
+        };
+      },
     },
     {
       name: "add_ajo_member",
@@ -218,6 +251,11 @@ export async function connectTools(
           dailyKobo: z.number().int().min(100).max(100000000),
           maturityDate: z.string().date(),
           startDate: z.string().date().optional(),
+          consentConfirmed: z
+            .literal(true)
+            .describe(
+              "Only true after the organizer explicitly confirms this represented saver accepted the rules and fee. Never infer or invent consent.",
+            ),
         })
         .strict(),
       run: (args: any) =>
@@ -226,6 +264,7 @@ export async function connectTools(
           dailyKobo: args.dailyKobo,
           maturityDate: args.maturityDate,
           startDate: args.startDate,
+          consentConfirmed: args.consentConfirmed,
         }),
     },
     {

@@ -24,6 +24,13 @@ import {
   contributionSummary,
   lagosDate,
 } from "./ajo-allocation.ts";
+import {
+  FeePolicy,
+  Agreement,
+  acceptedTerms,
+  invitationCode,
+  bookRules,
+} from "./ajo-terms.ts";
 
 export class Core {
   db: Store;
@@ -366,7 +373,7 @@ export class Core {
         : "json_extract(data,'$.updatedAt')";
     await this.db.transaction(async (q) => {
       await q.query(
-        "DELETE FROM records WHERE kind IN ('conversation','reply','media_result','progress') AND " +
+        "DELETE FROM records WHERE kind IN ('conversation','reply','media_result','progress','membership_proposal') AND " +
           field +
           "<$1",
         [cutoff],
@@ -421,7 +428,8 @@ export class Core {
     const id = edit?.id || randomUUID(),
       quoted: QuotedTask[] = [],
       goals = await this.records(owner, "goal");
-    const contributions = new Map<string, number>();
+    const contributions = new Map<string, number>(),
+      payoutFees = new Map<string, number>();
     for (const task of tasks) {
       await progress({
         stage: "checking",
@@ -451,6 +459,9 @@ export class Core {
         goalId: string | undefined;
       let recipient: QuotedTask["recipient"];
       let allocation: QuotedTask["allocation"];
+      let amountKobo = task.amountKobo,
+        feeTarget: string | undefined,
+        cycleFeeBeforeKobo: number | undefined;
       const dependsOn: number[] = [];
       if (task.kind === "bank_transfer") {
         destination = await this.rail.enquire(
@@ -530,6 +541,8 @@ export class Core {
         destination =
           (validation.name ? validation.name + " · " : "") + task.customer;
       } else {
+        if (task.kind !== "ajo_contribute" && !user.organizer)
+          throw new AppError("ORGANIZER_REQUIRED", 403);
         const member = await this.membership(this.db, owner, task.memberId);
         destination = member.name;
         if (task.kind === "ajo_cash" || task.kind === "ajo_contribute") {
@@ -588,6 +601,22 @@ export class Core {
           source = `ajo:${member.id}`;
           target = `wallet:${member.userId}`;
           label = "Ajo payout";
+          const feeBefore = safeInteger(
+            payoutFees.get(member.id) ?? member.feePaidKobo ?? 0,
+          );
+          cycleFeeBeforeKobo = feeBefore;
+          feeKobo = Math.max(0, (member.agreedFeeKobo || 0) - feeBefore);
+          if (task.amountKobo <= feeKobo)
+            throw new AppError("AJO_PAYOUT_TOO_SMALL");
+          amountKobo = task.amountKobo - feeKobo;
+          feeTarget = `wallet:${owner}`;
+          payoutFees.set(member.id, feeBefore + feeKobo);
+          const previous = quoted.findLastIndex(
+            (row) =>
+              row.input.kind === "ajo_payout" &&
+              row.input.memberId === member.id,
+          );
+          if (previous >= 0) dependsOn.push(previous);
         }
       }
       quoted.push({
@@ -597,12 +626,13 @@ export class Core {
         destination,
         source,
         target,
-        amountKobo: task.amountKobo,
+        amountKobo,
         feeKobo,
         goalId,
         dependsOn,
         ...(recipient ? { recipient } : {}),
         ...(allocation ? { allocation } : {}),
+        ...(feeTarget ? { feeTarget, cycleFeeBeforeKobo } : {}),
       });
       await progress({
         stage: "checking",
@@ -768,6 +798,18 @@ export class Core {
           contributionTotals.set(member.id, next.afterKobo);
         }
       const totals = new Map<string, number>();
+      const checkedFees = new Map<string, number>();
+      for (const task of p.spec)
+        if (task.input.kind === "ajo_payout") {
+          const member = await this.membership(q, owner, task.input.memberId);
+          const paid = checkedFees.get(member.id) ?? member.feePaidKobo ?? 0;
+          if (
+            paid !== task.cycleFeeBeforeKobo ||
+            task.feeKobo !== Math.max(0, (member.agreedFeeKobo || 0) - paid)
+          )
+            throw new AppError("AJO_PAYOUT_CHANGED", 409);
+          checkedFees.set(member.id, paid + task.feeKobo);
+        }
       for (const task of p.spec)
         if (task.source)
           totals.set(
@@ -789,6 +831,11 @@ export class Core {
         await q.query("UPDATE tasks SET status='QUEUED' WHERE id=$1", [
           task.id,
         ]);
+        for (const dependency of task.dependsOn)
+          await q.query(
+            "INSERT INTO task_dependencies(task,dependency) VALUES($1,$2) ON CONFLICT DO NOTHING",
+            [task.id, p.spec[dependency].id],
+          );
         await this.enqueue(q, task.id, "task", owner, {
           planId: id,
           taskId: task.id,
@@ -811,22 +858,169 @@ export class Core {
       [id, kind, owner, JSON.stringify(payload), "QUEUED", stamp()],
     );
   }
-  async createBook(owner: string, name: string) {
+  async createBook(
+    owner: string,
+    name: string,
+    options: { feePolicy: FeePolicy; rules?: string } = {
+      feePolicy: { kind: "none" },
+    },
+  ) {
     const user = await this.getUser(owner);
     if (!user.organizer) throw new AppError("ORGANIZER_REQUIRED", 403);
     if (!name.trim() || name.length > 60) throw new AppError("INVALID_NAME");
     const id = randomUUID(),
-      invite = createHash("sha256")
-        .update(randomUUID())
-        .digest("hex")
-        .slice(0, 8)
-        .toUpperCase();
-    await this.put(this.db, id, owner, "book", {
-      name: name.trim(),
-      invite,
-      createdAt: stamp(),
+      data = {
+        name: name.trim(),
+        invite: invitationCode(),
+        inviteExpiresAt: future(7 * 86400000),
+        inviteRevokedAt: null,
+        termsVersion: 1,
+        feePolicy: FeePolicy.parse(options.feePolicy),
+        rules: bookRules(options.rules),
+        createdAt: stamp(),
+      };
+    await this.put(this.db, id, owner, "book", data);
+    return { id, ...data };
+  }
+  async invitation(q: Query, invite: string) {
+    if (!/^[A-Za-z0-9]{8}$/.test(invite))
+      throw new AppError("INVITE_NOT_FOUND");
+    const field = this.db.postgres
+      ? "data::jsonb->>'invite'"
+      : "json_extract(data,'$.invite')";
+    const row = (
+      await q.query(
+        "SELECT id,owner,data FROM records WHERE kind='book' AND " +
+          field +
+          "=$1",
+        [invite.toUpperCase()],
+      )
+    ).rows[0];
+    if (!row) {
+      const revoked = (
+        await q.query(
+          "SELECT id FROM records WHERE id=$1 AND kind='invite_revocation'",
+          ["revoked-invite:" + digest(invite.toUpperCase())],
+        )
+      ).rows[0];
+      throw new AppError(revoked ? "INVITE_REVOKED" : "INVITE_NOT_FOUND");
+    }
+    const book = { ...JSON.parse(row.data), id: row.id, organizer: row.owner };
+    if (book.inviteRevokedAt) throw new AppError("INVITE_REVOKED");
+    if (!book.termsVersion || !book.inviteExpiresAt)
+      throw new AppError("AJO_TERMS_REVIEW_REQUIRED");
+    if (book.inviteExpiresAt <= stamp()) throw new AppError("INVITE_EXPIRED");
+    return book;
+  }
+  async previewInvitation(owner: string, invite: string) {
+    const user = await this.getUser(owner);
+    if (!user.ready) throw new AppError("SETUP_REQUIRED");
+    const book = await this.invitation(this.db, invite),
+      organizer = await this.getUser(book.organizer);
+    return {
+      id: book.id,
+      name: book.name,
+      organizerName: organizer.name,
+      invite: book.invite,
+      inviteExpiresAt: book.inviteExpiresAt,
+      termsVersion: book.termsVersion,
+      rules: book.rules,
+      feePolicy: book.feePolicy,
+      model: "individual_daily_thrift",
+      noGuaranteedYield: true,
+    };
+  }
+  async proposeMembership(
+    owner: string,
+    input: {
+      invite: string;
+      dailyKobo: number;
+      maturityDate: string;
+      startDate?: string;
+    },
+  ) {
+    const book = await this.previewInvitation(owner, input.invite),
+      startDate = input.startDate || lagosDate();
+    acceptedTerms(
+      book,
+      {
+        dailyKobo: input.dailyKobo,
+        maturityDate: input.maturityDate,
+        joinedDate: startDate,
+      },
+      { consent: true, termsVersion: book.termsVersion },
+    );
+    const id = randomUUID();
+    await this.put(this.db, id, owner, "membership_proposal", {
+      ...input,
+      startDate,
+      termsVersion: book.termsVersion,
+      expiresAt: future(300000),
+      updatedAt: stamp(),
     });
-    return { id, name, invite };
+    return { id, book, privateAgreementRequired: true };
+  }
+  async membershipProposal(owner: string, id: string) {
+    const proposal = await this.owned(
+      this.db,
+      owner,
+      id,
+      "membership_proposal",
+    );
+    if (proposal.expiresAt <= stamp())
+      throw new AppError("REVIEW_EXPIRED", 410);
+    const book = await this.previewInvitation(owner, proposal.invite);
+    if (proposal.termsVersion !== book.termsVersion)
+      throw new AppError("AJO_TERMS_CHANGED", 409);
+    return { ...proposal, book };
+  }
+  async changeInvitation(
+    owner: string,
+    bookId: string,
+    action: "rotate" | "revoke",
+  ) {
+    if (!(await this.getUser(owner)).organizer)
+      throw new AppError("ORGANIZER_REQUIRED", 403);
+    return this.db.transaction(async (q) => {
+      if (this.db.postgres)
+        await q.query(
+          "SELECT id FROM records WHERE id=$1 AND owner=$2 FOR UPDATE",
+          [bookId, owner],
+        );
+      const book = await this.owned(q, owner, bookId, "book");
+      await q.query(
+        "INSERT INTO records(id,kind,owner,data) VALUES($1,'invite_revocation',$2,$3) ON CONFLICT(id) DO NOTHING",
+        [
+          "revoked-invite:" + digest(book.invite),
+          owner,
+          JSON.stringify({ bookId, revokedAt: stamp() }),
+        ],
+      );
+      const { id, version, ...before } = book;
+      const data = {
+        ...before,
+        termsVersion: before.termsVersion || 1,
+        rules: before.rules || bookRules(),
+        feePolicy: before.feePolicy || { kind: "none" },
+        ...(action === "rotate"
+          ? {
+              invite: invitationCode(),
+              inviteExpiresAt: future(7 * 86400000),
+              inviteRevokedAt: null,
+            }
+          : { inviteRevokedAt: stamp() }),
+      };
+      await q.query(
+        "UPDATE records SET data=$1,version=version+1 WHERE id=$2",
+        [JSON.stringify(data), id],
+      );
+      await this.put(q, randomUUID(), owner, "book_event", {
+        bookId,
+        action,
+        createdAt: stamp(),
+      });
+      return { id, ...data };
+    });
   }
   async addMember(
     owner: string,
@@ -836,10 +1030,14 @@ export class Core {
       dailyKobo: number;
       maturityDate: string;
       startDate?: string;
-      userId?: string;
+      consentConfirmed: true;
     },
   ) {
-    await this.owned(this.db, owner, bookId, "book");
+    if (!(await this.getUser(owner)).organizer)
+      throw new AppError("ORGANIZER_REQUIRED", 403);
+    const book = await this.owned(this.db, owner, bookId, "book");
+    if (input.consentConfirmed !== true)
+      throw new AppError("AJO_CONSENT_REQUIRED");
     if (
       !input.name.trim() ||
       !Number.isSafeInteger(input.dailyKobo) ||
@@ -847,9 +1045,13 @@ export class Core {
       !/^\d{4}-\d{2}-\d{2}$/.test(input.maturityDate)
     )
       throw new AppError("INVALID_MEMBER");
-    if (input.userId) await this.getUser(input.userId);
+    if ("userId" in input) throw new AppError("AJO_PRIVATE_JOIN_REQUIRED");
     const joinedDate = input.startDate || lagosDate();
-    contributionCapacity({ ...input, joinedDate });
+    const agreement = acceptedTerms(
+      book,
+      { ...input, joinedDate },
+      { termsVersion: book.termsVersion, consent: true },
+    );
     const id = randomUUID();
     await this.db.transaction(async (q) => {
       await this.put(q, id, owner, "member", {
@@ -858,6 +1060,9 @@ export class Core {
         cashOutstandingKobo: 0,
         joinedDate,
         contributedKobo: 0,
+        agreement: { ...agreement, acceptedAt: stamp(), representedBy: owner },
+        agreedFeeKobo: agreement.agreedFeeKobo,
+        feePaidKobo: 0,
       });
       await account(q, `ajo:${id}`, owner, "member_principal");
     });
@@ -869,16 +1074,16 @@ export class Core {
     dailyKobo: number,
     maturityDate: string,
     startDate = lagosDate(),
+    agreement?: Agreement,
   ) {
-    const rows = (
-      await this.db.query("SELECT * FROM records WHERE kind='book'")
-    ).rows;
-    const book = rows.find(
-      (r) => JSON.parse(r.data).invite === invite.toUpperCase(),
-    );
-    if (!book) throw new AppError("INVITE_NOT_FOUND");
+    const book = await this.invitation(this.db, invite);
     const user = await this.getUser(owner);
-    contributionCapacity({ joinedDate: startDate, maturityDate, dailyKobo });
+    if (!user.ready) throw new AppError("SETUP_REQUIRED");
+    const terms = acceptedTerms(
+      book,
+      { joinedDate: startDate, maturityDate, dailyKobo },
+      agreement,
+    );
     if (
       !Number.isSafeInteger(dailyKobo) ||
       dailyKobo < 100 ||
@@ -890,10 +1095,29 @@ export class Core {
         .digest("hex"),
       id = `${hash.slice(0, 8)}-${hash.slice(8, 12)}-4${hash.slice(13, 16)}-a${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
     return this.db.transaction(async (q) => {
+      if (this.db.postgres)
+        await q.query("SELECT id FROM records WHERE id=$1 FOR UPDATE", [
+          book.id,
+        ]);
+      const currentBook = await this.invitation(q, invite);
+      if (
+        currentBook.id !== book.id ||
+        currentBook.termsVersion !== terms.termsVersion
+      )
+        throw new AppError("AJO_TERMS_CHANGED", 409);
       const current = (
         await q.query("SELECT data FROM records WHERE id=$1", [id])
       ).rows[0];
-      if (current) return { id, ...JSON.parse(current.data) };
+      if (current) {
+        const data = JSON.parse(current.data);
+        if (
+          data.dailyKobo !== dailyKobo ||
+          data.maturityDate !== maturityDate ||
+          data.joinedDate !== startDate
+        )
+          throw new AppError("AJO_ALREADY_JOINED", 409);
+        return { id, ...data };
+      }
       const data = {
         name: user.name,
         userId: owner,
@@ -903,9 +1127,12 @@ export class Core {
         cashOutstandingKobo: 0,
         joinedDate: startDate,
         contributedKobo: 0,
+        agreement: { ...terms, acceptedAt: stamp(), acceptedBy: owner },
+        agreedFeeKobo: terms.agreedFeeKobo,
+        feePaidKobo: 0,
       };
-      await this.put(q, id, book.owner, "member", data);
-      await account(q, `ajo:${id}`, book.owner, "member_principal");
+      await this.put(q, id, book.organizer, "member", data);
+      await account(q, `ajo:${id}`, book.organizer, "member_principal");
       return { id, ...data };
     });
   }
@@ -916,7 +1143,7 @@ export class Core {
     return this.db.transaction(async (q) => {
       const row = (
         await q.query(
-          "SELECT * FROM jobs WHERE kind=$2 AND ((status='QUEUED' AND (lease_until IS NULL OR lease_until<=$1)) OR (status='RUNNING' AND lease_until<=$1)) AND NOT EXISTS (SELECT 1 FROM jobs active WHERE active.owner=jobs.owner AND active.kind=jobs.kind AND active.kind<>'task' AND active.id<>jobs.id AND active.status='RUNNING' AND active.lease_until>$1) ORDER BY created_at LIMIT 1" +
+          "SELECT * FROM jobs WHERE kind=$2 AND ((status='QUEUED' AND (lease_until IS NULL OR lease_until<=$1)) OR (status='RUNNING' AND lease_until<=$1)) AND NOT EXISTS (SELECT 1 FROM jobs active WHERE active.owner=jobs.owner AND active.kind=jobs.kind AND active.kind<>'task' AND active.id<>jobs.id AND active.status='RUNNING' AND active.lease_until>$1) AND (jobs.kind<>'task' OR NOT EXISTS (SELECT 1 FROM task_dependencies edge JOIN tasks prerequisite ON prerequisite.id=edge.dependency WHERE edge.task=jobs.id AND prerequisite.status NOT IN ('SETTLED','FAILED','NOT_STARTED','CANCELLED'))) ORDER BY created_at LIMIT 1" +
             (this.db.postgres ? " FOR UPDATE SKIP LOCKED" : ""),
           [stamp(), kind],
         )
@@ -958,7 +1185,9 @@ export class Core {
     if (
       task.dependsOn.some(
         (i) =>
-          !["SETTLED", "FAILED", "NOT_STARTED"].includes(p.tasks[i].status),
+          !["SETTLED", "FAILED", "NOT_STARTED", "CANCELLED"].includes(
+            p.tasks[i].status,
+          ),
       )
     ) {
       await this.db.query(
@@ -1036,7 +1265,8 @@ export class Core {
         if (
           task.input.kind === "ajo_cash" ||
           task.input.kind === "ajo_contribute" ||
-          task.input.kind === "ajo_replace"
+          task.input.kind === "ajo_replace" ||
+          task.input.kind === "ajo_payout"
         ) {
           if (this.db.postgres)
             await q.query("SELECT id FROM records WHERE id=$1 FOR UPDATE", [
@@ -1047,6 +1277,16 @@ export class Core {
             job.owner,
             task.input.memberId,
           );
+          if (
+            task.input.kind === "ajo_payout" &&
+            ((member.feePaidKobo || 0) !== task.cycleFeeBeforeKobo ||
+              task.feeKobo !==
+                Math.max(
+                  0,
+                  (member.agreedFeeKobo || 0) - (member.feePaidKobo || 0),
+                ))
+          )
+            throw new AppError("AJO_PAYOUT_CHANGED", 409);
           if (task.allocation) {
             const actual = allocateContribution(
               member,
@@ -1111,6 +1351,15 @@ export class Core {
                 ...(task.allocation
                   ? { contributedKobo: task.allocation.afterKobo }
                   : {}),
+                ...(task.input.kind === "ajo_payout"
+                  ? {
+                      feePaidKobo: (member.feePaidKobo || 0) + task.feeKobo,
+                      paidOutPrincipalKobo:
+                        (member.paidOutPrincipalKobo || 0) +
+                        task.amountKobo +
+                        task.feeKobo,
+                    }
+                  : {}),
               }),
               memberId,
             ],
@@ -1132,7 +1381,10 @@ export class Core {
             { account: task.target!, amount: task.amountKobo },
           ];
           if (task.feeKobo)
-            entries.push({ account: "system:fees", amount: task.feeKobo });
+            entries.push({
+              account: task.feeTarget || "system:fees",
+              amount: task.feeKobo,
+            });
           await post(q, task.id, entries);
         }
         const receipt = randomUUID();
@@ -1144,6 +1396,12 @@ export class Core {
           label: task.label,
           amountKobo: task.amountKobo,
           feeKobo: task.feeKobo,
+          ...(task.input.kind === "ajo_payout"
+            ? {
+                grossAmountKobo: task.amountKobo + task.feeKobo,
+                feeLabel: "Organizer cycle fee",
+              }
+            : {}),
           destination: task.destination,
           ...(task.recipient ? { recipient: task.recipient } : {}),
           createdAt: stamp(),
@@ -1176,13 +1434,20 @@ export class Core {
             taskId: task.id,
             status: "SETTLED",
             direction: "credit",
+            kind: task.input.kind,
             label:
               task.input.kind === "ajo_payout"
                 ? "Ajo payout received"
                 : "PayWella transfer received",
             destination: "From " + sender.name,
             amountKobo: task.amountKobo,
-            feeKobo: 0,
+            feeKobo: task.input.kind === "ajo_payout" ? task.feeKobo : 0,
+            ...(task.input.kind === "ajo_payout"
+              ? {
+                  grossAmountKobo: task.amountKobo + task.feeKobo,
+                  feeLabel: "Organizer cycle fee",
+                }
+              : {}),
             createdAt: stamp(),
             reference: "PW-" + task.id,
           });

@@ -77,6 +77,7 @@ test("a ledger picture creates review candidates only, preserves uncertain rows,
     await db.query("UPDATE users SET organizer=1 WHERE id=$1", [owner]);
     const book = await core.createBook(owner, "Market savers"),
       member = await core.addMember(owner, book.id, {
+        consentConfirmed: true,
         name: "Tunde Example",
         dailyKobo: 20000,
         maturityDate: "2027-01-01",

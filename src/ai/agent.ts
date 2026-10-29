@@ -97,6 +97,7 @@ export class Agent {
         };
     }
     let prepared: Awaited<ReturnType<Core["prepare"]>> | null = null;
+    let membershipProposal: string | null = null;
     let cleared = false;
     const clean = privateText(text);
     if (unfinished.join("\n").length + clean.length > 16000)
@@ -114,6 +115,9 @@ export class Agent {
         activePlan = null;
       },
       progress,
+      (id) => {
+        membershipProposal = id;
+      },
     );
     const messages: ModelMessage[] = [
       { role: "system", content: policy },
@@ -182,6 +186,13 @@ export class Agent {
         )
           throw new AppError("AI_SPLIT_PLAN", 503);
         if (response.calls.length > 8) throw new AppError("AI_TOOL_LIMIT", 503);
+        if (
+          response.calls.some((call) => call.name === "join_ajo_book") &&
+          response.calls.some((call) =>
+            ["prepare_plan", "revise_plan"].includes(call.name),
+          )
+        )
+          throw new AppError("AI_MEMBERSHIP_FIRST", 409);
         messages.push({
           role: "assistant",
           content: response.text,
@@ -232,9 +243,10 @@ export class Agent {
           }
           position = end;
         }
-        if (prepared) break;
+        if (prepared || membershipProposal) break;
       }
-      if (!reply && !prepared) throw new AppError("AI_NEEDS_RETRY", 503);
+      if (!reply && !prepared && !membershipProposal)
+        throw new AppError("AI_NEEDS_RETRY", 503);
       const saved = cleared
         ? []
         : messages
@@ -251,8 +263,11 @@ export class Agent {
       return {
         text: current
           ? "Your private review is ready. Check every task before approving."
-          : privateText(reply).slice(0, 1200),
+          : membershipProposal
+            ? "Review and accept the Ajo membership terms privately. No contribution has been taken."
+            : privateText(reply).slice(0, 1200),
         ...(current ? { prepared: current } : {}),
+        ...(membershipProposal ? { membershipProposal } : {}),
         trace,
       };
     } finally {

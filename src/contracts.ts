@@ -102,6 +102,8 @@ export type QuotedTask = {
   target: string | null;
   amountKobo: number;
   feeKobo: number;
+  feeTarget?: string;
+  cycleFeeBeforeKobo?: number;
   goalId?: string;
   dependsOn: number[];
   allocation?: ContributionAllocation;

@@ -109,6 +109,7 @@ try {
       20000,
       "2026-12-31",
       "2026-01-01",
+      { termsVersion: 1, consent: true },
     ),
     cash = await core.prepare(owner, {
       tasks: [
@@ -171,6 +172,38 @@ try {
   } finally {
     await tools.close();
   }
+  const feeBook = await core.createBook(owner, "Fee verification", {
+    feePolicy: { kind: "one_day" },
+  });
+  const feeMember = await core.joinBook(
+    saver,
+    feeBook.invite,
+    10000,
+    "2026-10-20",
+    "2026-10-01",
+    { termsVersion: 1, consent: true },
+  );
+  const funded = await core.prepare(saver, {
+    tasks: [
+      { kind: "ajo_contribute", memberId: feeMember.id, amountKobo: 100000 },
+    ],
+  });
+  await core.approve(saver, funded.plan.id, 1, "4321");
+  await core.drain();
+  const payout = await core.prepare(owner, {
+    tasks: [
+      { kind: "ajo_payout", memberId: feeMember.id, amountKobo: 50000 },
+      { kind: "ajo_payout", memberId: feeMember.id, amountKobo: 50000 },
+    ],
+  });
+  await core.approve(owner, payout.plan.id, 1, "1234");
+  await Promise.all([core.drain(), core.drain()]);
+  assert.equal((await core.plan(owner, payout.plan.id)).status, "SUCCEEDED");
+  assert.equal(
+    (await core.workspace(saver)).members.find((m) => m.id === feeMember.id)!
+      .feePaidKobo,
+    10000,
+  );
   process.stdout.write(
     "PostgreSQL checks passed: concurrent approval, parallel settlement, revisions, statements, Ajo allocation and delivery-status races, RLS and immutable ledger.\n",
   );
