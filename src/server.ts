@@ -39,7 +39,7 @@ function json(res: ServerResponse, value: unknown, status = 200) {
 }
 export function createApp(core: Core, agent: Agent, env: NodeJS.ProcessEnv) {
   const origin = new URL(env.PUBLIC_ORIGIN || "http://localhost:4317").origin,
-    production = env.NODE_ENV === "production";
+    secureTransport = origin.startsWith("https:");
   const limits = new Map<string, { count: number; until: number }>();
   async function session(req: IncomingMessage): Promise<Session> {
     const secret = (req.headers.cookie || "")
@@ -60,7 +60,7 @@ export function createApp(core: Core, agent: Agent, env: NodeJS.ProcessEnv) {
   function cookie(res: ServerResponse, secret: string) {
     res.setHeader(
       "set-cookie",
-      `pw_session=${secret}; HttpOnly; SameSite=Strict; Path=/; Max-Age=1800${production ? "; Secure" : ""}`,
+      `pw_session=${secret}; HttpOnly; SameSite=Strict; Path=/; Max-Age=1800${secureTransport ? "; Secure" : ""}`,
     );
   }
   function workspace(s: Session) {
@@ -87,7 +87,7 @@ export function createApp(core: Core, agent: Agent, env: NodeJS.ProcessEnv) {
       "permissions-policy",
       "camera=(), microphone=(self), geolocation=()",
     );
-    if (production)
+    if (secureTransport)
       res.setHeader("strict-transport-security", "max-age=31536000");
     try {
       const url = new URL(req.url || "/", origin),
@@ -274,7 +274,7 @@ export function createApp(core: Core, agent: Agent, env: NodeJS.ProcessEnv) {
           ]);
           res.setHeader(
             "set-cookie",
-            "pw_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0",
+            `pw_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0${secureTransport ? "; Secure" : ""}`,
           );
           return json(res, { ok: true });
         }

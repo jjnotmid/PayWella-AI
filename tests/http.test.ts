@@ -34,6 +34,11 @@ test("private links are single-use, cookies are protected, review access is owne
     const cookie = exchange.headers.get("set-cookie")!;
     assert.match(cookie, /HttpOnly/);
     assert.match(cookie, /SameSite=Strict/);
+    assert.match(cookie, /; Secure/);
+    assert.equal(
+      exchange.headers.get("strict-transport-security"),
+      "max-age=31536000",
+    );
     assert.equal((await request("exchange", { token: cap })).status, 401);
     const setup = await request(
         "setup",

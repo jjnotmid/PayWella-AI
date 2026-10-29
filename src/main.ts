@@ -29,7 +29,7 @@ const cleanup = setInterval(
     }),
   3600000,
 );
-server.listen(Number(env.PORT || 4317), "0.0.0.0", () =>
+server.listen(Number(env.PORT || 4317), env.HOST || "0.0.0.0", () =>
   process.stdout.write("PayWella AI is listening. Financial rails: sandbox.\n"),
 );
 let stopping = false;
