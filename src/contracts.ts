@@ -16,6 +16,22 @@ export type Language = z.infer<typeof Language>;
 export const Task = z.discriminatedUnion("kind", [
   z
     .object({
+      kind: z.literal("goal_schedule"),
+      goalId: z.string().uuid().optional(),
+      name: z.string().trim().min(1).max(60).optional(),
+      amountKobo: money,
+      frequency: z.enum(["daily", "weekly"]),
+      startDate: z.string().date(),
+      endDate: z.string().date(),
+      replacesId: z.string().uuid().optional(),
+    })
+    .strict()
+    .refine(
+      (value) => !!value.goalId !== !!value.name,
+      "Choose a goal ID or a goal name.",
+    ),
+  z
+    .object({
       kind: z.literal("bank_transfer"),
       amountKobo: money,
       bankCode: z.string().max(20),
@@ -104,6 +120,20 @@ export type QuotedTask = {
   feeKobo: number;
   feeTarget?: string;
   cycleFeeBeforeKobo?: number;
+  savingsSchedule?: {
+    id: string;
+    goalId: string;
+    goalName: string;
+    createGoal: boolean;
+    amountKobo: number;
+    frequency: "daily" | "weekly";
+    startDate: string;
+    endDate: string;
+    maximumRuns: number;
+    maximumKobo: number;
+    replacesId?: string;
+    replacesVersion?: number;
+  };
   goalId?: string;
   dependsOn: number[];
   allocation?: ContributionAllocation;

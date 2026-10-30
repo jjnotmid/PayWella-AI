@@ -31,6 +31,11 @@ import {
   invitationCode,
   bookRules,
 } from "./ajo-terms.ts";
+import {
+  quoteSchedule,
+  activateSchedule,
+  namedGoalId,
+} from "./savings-schedules.ts";
 
 export class Core {
   db: Store;
@@ -166,6 +171,8 @@ export class Core {
       importRows,
       balances,
       beneficiaries,
+      schedules,
+      savingsRuns,
     ] = await Promise.all([
       this.getUser(owner),
       this.records(owner, "goal"),
@@ -191,6 +198,8 @@ export class Core {
         [owner],
       ),
       this.records(owner, "beneficiary"),
+      this.records(owner, "savings_schedule"),
+      this.records(owner, "savings_run"),
     ]);
     const totals = new Map(
       balances.rows.map((row) => [
@@ -212,6 +221,10 @@ export class Core {
     return {
       user,
       beneficiaries,
+      schedules,
+      savingsRuns: savingsRuns
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+        .slice(0, 20),
       funding: await this.fundingDetails(owner),
       balanceKobo: totals.get("wallet:" + owner)?.balance || 0,
       availableKobo: totals.get("wallet:" + owner)?.available || 0,
@@ -459,6 +472,7 @@ export class Core {
         goalId: string | undefined;
       let recipient: QuotedTask["recipient"];
       let allocation: QuotedTask["allocation"];
+      let savingsSchedule: QuotedTask["savingsSchedule"];
       let amountKobo = task.amountKobo,
         feeTarget: string | undefined,
         cycleFeeBeforeKobo: number | undefined;
@@ -499,11 +513,19 @@ export class Core {
             q.input.name.toLocaleLowerCase() === task.name.toLocaleLowerCase(),
         );
         goalId =
-          match[0]?.id || (prior >= 0 ? quoted[prior].goalId : randomUUID());
+          match[0]?.id ||
+          (prior >= 0 ? quoted[prior].goalId : namedGoalId(owner, task.name));
         if (prior >= 0) dependsOn.push(prior);
         target = `goal:${goalId}`;
         label = "Save for " + task.name;
         destination = task.name;
+        const previousGoalTask = quoted.findLastIndex(
+          (row) => row.goalId === goalId,
+        );
+        if (previousGoalTask >= 0 && !dependsOn.includes(previousGoalTask))
+          dependsOn.push(previousGoalTask);
+        if (!goals.some((goal) => goal.id === goalId))
+          goals.push({ id: goalId, name: task.name });
       } else if (
         task.kind === "goal_deposit" ||
         task.kind === "goal_withdraw"
@@ -520,6 +542,25 @@ export class Core {
           if (g.lockedUntil && g.lockedUntil > stamp())
             throw new AppError("GOAL_LOCKED");
         }
+      } else if (task.kind === "goal_schedule") {
+        savingsSchedule = await quoteSchedule(this, owner, task, goals);
+        goalId = savingsSchedule.goalId;
+        source = null;
+        target = null;
+        amountKobo = 0;
+        label = `Schedule ${naira(task.amountKobo)} ${task.frequency}`;
+        destination = savingsSchedule.goalName;
+        const previous = quoted.findLastIndex((row) => row.goalId === goalId);
+        if (previous >= 0) dependsOn.push(previous);
+        if (!goals.some((goal) => goal.id === goalId))
+          goals.push({ id: goalId, name: savingsSchedule.goalName });
+        if (
+          task.replacesId &&
+          quoted.some(
+            (row) => row.savingsSchedule?.replacesId === task.replacesId,
+          )
+        )
+          throw new AppError("REQUEST_INVALID");
       } else if (task.kind === "service") {
         const product = products.find((p) => p.id === task.productId);
         if (
@@ -633,6 +674,7 @@ export class Core {
         ...(recipient ? { recipient } : {}),
         ...(allocation ? { allocation } : {}),
         ...(feeTarget ? { feeTarget, cycleFeeBeforeKobo } : {}),
+        ...(savingsSchedule ? { savingsSchedule } : {}),
       });
       await progress({
         stage: "checking",
@@ -740,7 +782,13 @@ export class Core {
     });
     return this.plan(owner, id);
   }
-  async approve(owner: string, id: string, revision: number, pin: string) {
+  async approve(
+    owner: string,
+    id: string,
+    revision: number,
+    pin: string,
+    standingConsent = false,
+  ) {
     const current = await this.plan(owner, id);
     if (current.status !== "READY") {
       if (
@@ -752,6 +800,11 @@ export class Core {
         return current;
       throw new AppError("REVIEW_CLOSED", 409);
     }
+    if (
+      current.spec.some((task) => task.input.kind === "goal_schedule") &&
+      !standingConsent
+    )
+      throw new AppError("SCHEDULE_CONSENT_REQUIRED");
     await checkPin(this.db, owner, pin);
     await this.db.transaction(async (q) => {
       if (this.db.postgres)
@@ -798,6 +851,20 @@ export class Core {
           contributionTotals.set(member.id, next.afterKobo);
         }
       const totals = new Map<string, number>();
+      for (const task of p.spec)
+        if (task.savingsSchedule?.replacesId) {
+          const before = await this.owned(
+            q,
+            owner,
+            task.savingsSchedule.replacesId,
+            "savings_schedule",
+          );
+          if (
+            before.status !== "ACTIVE" ||
+            before.version !== task.savingsSchedule.replacesVersion
+          )
+            throw new AppError("REVIEW_CHANGED", 409);
+        }
       const checkedFees = new Map<string, number>();
       for (const task of p.spec)
         if (task.input.kind === "ajo_payout") {
@@ -1258,10 +1325,17 @@ export class Core {
               )
             ).rows.length
           )
-            await this.put(q, task.goalId!, job.owner, "goal", {
-              name: task.input.name,
-            });
+            await q.query(
+              "INSERT INTO records(id,kind,owner,data) VALUES($1,'goal',$2,$3) ON CONFLICT(id) DO NOTHING",
+              [
+                task.goalId!,
+                job.owner,
+                JSON.stringify({ name: task.input.name }),
+              ],
+            );
         }
+        if (task.input.kind === "goal_schedule")
+          await activateSchedule(this, q, job.owner, task, p.id);
         if (
           task.input.kind === "ajo_cash" ||
           task.input.kind === "ajo_contribute" ||
@@ -1408,6 +1482,9 @@ export class Core {
           reference: "PW-" + task.id,
           ...(task.allocation ? { allocation: task.allocation } : {}),
           kind: task.input.kind,
+          ...(task.savingsSchedule
+            ? { savingsSchedule: task.savingsSchedule }
+            : {}),
           ...(task.input.kind === "service" &&
           task.input.productId.endsWith("prepaid")
             ? { electricityToken: outcome.token }

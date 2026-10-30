@@ -61,7 +61,11 @@ export function PlanEditor({
         <fieldset key={index}>
           <legend>Task {index + 1}</legend>
           <label>
-            Amount (₦)
+            {task.kind === "goal_schedule"
+              ? "Amount each time (₦)"
+              : task.kind === "ajo_payout"
+                ? "Principal to pay out (₦)"
+                : "Amount (₦)"}
             <input
               type="number"
               inputMode="decimal"
@@ -84,6 +88,61 @@ export function PlanEditor({
               }
             />
           </label>
+          {task.kind === "goal_schedule" && (
+            <>
+              {task.name && (
+                <label>
+                  Goal name
+                  <input
+                    value={task.name}
+                    maxLength={60}
+                    disabled={busy}
+                    required
+                    onChange={(event) =>
+                      change(index, "name", event.target.value)
+                    }
+                  />
+                </label>
+              )}
+              <label>
+                How often
+                <select
+                  value={task.frequency}
+                  disabled={busy}
+                  onChange={(event) =>
+                    change(index, "frequency", event.target.value)
+                  }
+                >
+                  <option value="daily">Daily</option>
+                  <option value="weekly">Weekly</option>
+                </select>
+              </label>
+              <label>
+                First run
+                <input
+                  type="date"
+                  value={task.startDate}
+                  disabled={busy}
+                  required
+                  onChange={(event) =>
+                    change(index, "startDate", event.target.value)
+                  }
+                />
+              </label>
+              <label>
+                Last run
+                <input
+                  type="date"
+                  value={task.endDate}
+                  disabled={busy}
+                  required
+                  onChange={(event) =>
+                    change(index, "endDate", event.target.value)
+                  }
+                />
+              </label>
+            </>
+          )}
           {task.kind === "bank_transfer" && (
             <>
               <label>

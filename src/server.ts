@@ -17,6 +17,7 @@ import { statementPdf } from "./statements.ts";
 import { messageControl, whatsappCopy } from "./whatsapp-ui.ts";
 import { recordDelivery, deliveryStatuses } from "./whatsapp-delivery.ts";
 import { FeePolicy, Agreement } from "./ajo-terms.ts";
+import { cancelSchedule } from "./savings-schedules.ts";
 
 type Session = {
   owner: string;
@@ -461,6 +462,7 @@ export function createApp(core: Core, agent: Agent, env: NodeJS.ProcessEnv) {
               .object({
                 pin: z.string().regex(/^\d{4}$/),
                 revision: z.number().int().positive(),
+                standingConsent: z.literal(true).optional(),
               })
               .strict()
               .parse(data);
@@ -468,7 +470,13 @@ export function createApp(core: Core, agent: Agent, env: NodeJS.ProcessEnv) {
               throw new AppError("REVIEW_CHANGED", 409);
             return json(
               res,
-              await core.approve(s.owner, id, input.revision, input.pin),
+              await core.approve(
+                s.owner,
+                id,
+                input.revision,
+                input.pin,
+                input.standingConsent,
+              ),
               202,
             );
           }
@@ -584,6 +592,21 @@ export function createApp(core: Core, agent: Agent, env: NodeJS.ProcessEnv) {
                     ? { progress: agent.open(progress.sealed) }
                     : {}),
                 },
+          );
+        }
+        const scheduleCancellation = path.match(
+          /^\/api\/savings\/schedules\/([^/]+)\/cancel$/,
+        );
+        if (method === "POST" && scheduleCancellation) {
+          workspace(s);
+          z.object({}).strict().parse(data);
+          return json(
+            res,
+            await cancelSchedule(
+              core,
+              s.owner,
+              uuid.parse(scheduleCancellation[1]),
+            ),
           );
         }
         if (method === "POST" && path === "/api/ajo/books") {

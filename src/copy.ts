@@ -1,4 +1,10 @@
 export const errors: Record<string, string> = {
+  SCHEDULE_CONSENT_REQUIRED:
+    "Confirm the recurring amounts, dates and maximum total before authorizing future savings with your PIN.",
+  SCHEDULE_DATES_INVALID:
+    "Start recurring savings from tomorrow or later. Choose an end date on or after the start, within one year.",
+  SCHEDULE_CLOSED:
+    "This savings instruction has already ended or been cancelled. Create a new one to continue.",
   AJO_FEE_TOO_HIGH:
     "Choose a lower cycle fee so it can fit within one reviewed payout and still leave money for the saver.",
   AJO_ALREADY_JOINED:

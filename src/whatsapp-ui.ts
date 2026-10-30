@@ -4,6 +4,10 @@ import { languages } from "./languages.ts";
 
 const copy = {
   en: {
+    recurring: "Recurring savings",
+    maximum: "Maximum authorized",
+    futureOnly:
+      "No one-off debit now. Future runs need the separate recurring consent in your private review.",
     receipt: "Your PayWella receipt is attached.",
     welcome: "Your account is ready. Here are your account details.",
     menu: "What would you like to do? You can also type a request or send a voice note at any time.",
@@ -63,6 +67,10 @@ const copy = {
       "Please send a text request, a voice note or a clear picture of payment details or an Ajo ledger.",
   },
   pcm: {
+    recurring: "Regular savings",
+    maximum: "Highest total wey you approve",
+    futureOnly:
+      "No one-off debit now. Confirm the future savings runs inside your private review.",
     receipt: "Your PayWella receipt dey attached.",
     welcome: "Your account don ready. Na your account details be these.",
     menu: "Wetin you wan do? You fit still type your request or send voice note anytime.",
@@ -122,6 +130,10 @@ const copy = {
       "Type your request, send voice note, or send clear picture of payment details or Ajo book.",
   },
   yo: {
+    recurring: "Ìfowópamọ́ àtúnṣe",
+    maximum: "Àpapọ̀ tó pọ̀ jù tí o fọwọ́ sí",
+    futureOnly:
+      "A kò yọ owó lẹ́ẹ̀kan báyìí. Jẹ́rìí ìfowópamọ́ ọjọ́ iwájú nínú àyẹ̀wò ìkọ̀kọ̀ rẹ.",
     receipt: "Rísíìtì PayWella rẹ wà níbí.",
     welcome: "Àkọọ́lẹ̀ rẹ ti ṣetán. Èyí ni àlàyé àkọọ́lẹ̀ rẹ.",
     menu: "Kí ni o fẹ́ ṣe? O tún lè kọ ìbéèrè rẹ tàbí fi ohùn ránṣẹ́ nígbàkigbà.",
@@ -181,6 +193,10 @@ const copy = {
       "Kọ ìbéèrè rẹ, fi ohùn ránṣẹ́ tàbí fi àwòrán kedere ti àlàyé ìsanwó tàbí ìwé Ajo ránṣẹ́.",
   },
   ig: {
+    recurring: "Nchekwa ego ugboro ugboro",
+    maximum: "Ego kacha ị kwadoro",
+    futureOnly:
+      "A naghị ewepụ ego ozugbo ugbu a. Kwado usoro nchekwa n’ọdịnihu na nyocha nzuzo gị.",
     receipt: "Nnata PayWella gị dị ebe a.",
     welcome: "Akaụntụ gị adịla njikere. Ndị a bụ nkọwa akaụntụ gị.",
     menu: "Gịnị ka ị chọrọ ime? Ị nwekwara ike ide arịrịọ ma ọ bụ zipu ozi olu mgbe ọ bụla.",
@@ -239,6 +255,10 @@ const copy = {
       "Dee arịrịọ gị, zipu ozi olu ma ọ bụ foto doro anya nke nkọwa ịkwụ ụgwọ ma ọ bụ akwụkwọ Ajo.",
   },
   ha: {
+    recurring: "Ajiya mai maimaituwa",
+    maximum: "Mafi yawan kuɗin da ka amince",
+    futureOnly:
+      "Ba a cire kuɗi lokaci ɗaya yanzu ba. Tabbatar da ajiyar nan gaba a dubawarka ta ɓoye.",
     receipt: "Ga rasit ɗinka na PayWella.",
     welcome: "Asusunka ya shirya. Ga bayanan asusunka.",
     menu: "Me kake son yi? Haka kuma za ka iya rubuta buƙata ko aika saƙon murya a kowane lokaci.",
@@ -420,6 +440,10 @@ export function planMessage(plan: Plan, language: string) {
   const c = whatsappCopy(language),
     ready = plan.status === "READY";
   const tasks = plan.spec.map((task, index) => {
+    if (task.savingsSchedule) {
+      const schedule = task.savingsSchedule;
+      return `${index + 1}. ${c.recurring}: ${naira(schedule.amountKobo)} ${schedule.frequency}\n${schedule.goalName}\n${schedule.startDate} → ${schedule.endDate}, 09:00 WAT\n${c.maximum}: ${naira(schedule.maximumKobo)}\n${c.futureOnly}`;
+    }
     const name = c.taskNames[taskKinds.indexOf(task.input.kind)] || task.label;
     const recipient = task.recipient
       ? `${task.recipient.name}\n${task.recipient.bankName} · ${task.recipient.accountNumber}`

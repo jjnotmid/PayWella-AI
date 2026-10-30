@@ -12,6 +12,7 @@ import type { PreparationProgress } from "../contracts.ts";
 import { available } from "../ledger.ts";
 import type { ToolSpec } from "./model.ts";
 import { FeePolicy } from "../ajo-terms.ts";
+import { cancelSchedule } from "../savings-schedules.ts";
 const empty = z.object({}).strict();
 const readOnlyTools = new Set([
   "get_balance",
@@ -28,6 +29,7 @@ const readOnlyTools = new Set([
   "check_affordability",
   "get_notification_status",
   "preview_ajo_invitation",
+  "list_savings_schedules",
 ]);
 export async function connectTools(
   core: Core,
@@ -40,6 +42,25 @@ export async function connectTools(
 ) {
   await core.getUser(owner);
   const registry = [
+    {
+      name: "list_savings_schedules",
+      description:
+        "Read this owner's recurring savings instructions, their next date, approved amount, end date and recent settled or skipped runs. A skipped run never creates debt or catches up later without approval.",
+      schema: empty,
+      run: async () => ({
+        schedules: await core.records(owner, "savings_schedule"),
+        recentRuns: (await core.records(owner, "savings_run"))
+          .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+          .slice(0, 20),
+      }),
+    },
+    {
+      name: "cancel_savings_schedule",
+      description:
+        "Stop future runs of one owned recurring savings instruction when explicitly requested. Does not withdraw savings or reverse completed transfers. Changed amounts or dates need a new goal_schedule proposal and private PIN approval, with replacesId set.",
+      schema: z.object({ id: z.string().uuid() }).strict(),
+      run: (args: any) => cancelSchedule(core, owner, args.id),
+    },
     {
       name: "check_affordability",
       description:
@@ -336,6 +357,7 @@ export async function connectTools(
           "bank transfers",
           "PayWella transfers",
           "savings goals",
+          "privately approved daily or weekly savings schedules",
           "airtime",
           "data",
           "electricity",

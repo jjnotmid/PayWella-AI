@@ -26,7 +26,9 @@ export function receiptPdf(receipt: Row): Promise<Buffer> {
       .text(
         receipt.kind === "ajo_cash"
           ? "CASH COLLECTION RECORD"
-          : "PAYMENT RECEIPT",
+          : receipt.kind === "goal_schedule"
+            ? "RECURRING SAVINGS INSTRUCTION"
+            : "PAYMENT RECEIPT",
         32,
         90,
       );
@@ -36,15 +38,39 @@ export function receiptPdf(receipt: Row): Promise<Buffer> {
       .text(
         receipt.kind === "ajo_cash"
           ? "Cash recorded successfully"
-          : "Successfully completed",
+          : receipt.kind === "goal_schedule"
+            ? "Future savings authorized"
+            : "Successfully completed",
         32,
         140,
       );
     doc
       .fontSize(29)
-      .text(naira(receipt.amountKobo).replace("₦", "NGN "), 32, 175);
+      .text(
+        naira(
+          receipt.savingsSchedule?.amountKobo ?? receipt.amountKobo,
+        ).replace("₦", "NGN "),
+        32,
+        175,
+      );
     const rows = [
       ["Service", receipt.label],
+      ...(receipt.savingsSchedule
+        ? [
+            ["Frequency", receipt.savingsSchedule.frequency + " at 09:00 WAT"],
+            [
+              "Start / end",
+              receipt.savingsSchedule.startDate +
+                " / " +
+                receipt.savingsSchedule.endDate,
+            ],
+            [
+              "Maximum authorized",
+              naira(receipt.savingsSchedule.maximumKobo).replace("₦", "NGN "),
+            ],
+            ["Charge now", "No one-off debit. Missed runs are skipped."],
+          ]
+        : []),
       ...(receipt.recipient
         ? [
             ["Recipient", receipt.recipient.name],

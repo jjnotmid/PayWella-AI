@@ -484,6 +484,19 @@ form label {
   padding: 20px;
   margin: 0 0 24px;
 }
+.schedule-terms {
+  grid-column: 1 / -1;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 16px;
+  font-size: 12px;
+  line-height: 1.6;
+  background: var(--soft);
+  margin-top: 12px;
+}
+.schedule-terms p {
+  margin: 8px 0 0;
+}
 .membership-terms h3 {
   margin: 12px 0 8px;
 }

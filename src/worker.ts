@@ -18,6 +18,7 @@ import { randomUUID } from "node:crypto";
 import { createMediaReader, downloadWhatsAppMedia } from "./ai/media.ts";
 import { languages, introduction } from "./languages.ts";
 import { locateLedgerPage, cropLedgerPage } from "./ai/segmentation.ts";
+import { runSchedules } from "./savings-schedules.ts";
 import {
   serviceMenu,
   languageMenu,
@@ -32,6 +33,7 @@ export class Worker {
   fetcher: typeof fetch;
   active = new Map<string, Promise<void>>();
   stopping = false;
+  lastScheduleCheck = 0;
   get busy() {
     return this.active.size > 0;
   }
@@ -56,6 +58,14 @@ export class Worker {
       ["outbox", () => this.outbound()],
       ["receipts", () => this.receipt()],
       ["welcome", () => this.welcome()],
+      [
+        "schedules",
+        async () => {
+          if (Date.now() - this.lastScheduleCheck < 30000) return;
+          this.lastScheduleCheck = Date.now();
+          await runSchedules(this.core);
+        },
+      ],
     ];
     for (const [name, run] of lanes)
       if (!this.active.has(name)) {

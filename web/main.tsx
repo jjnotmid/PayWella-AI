@@ -850,9 +850,91 @@ function App() {
                         Withdraw
                       </button>
                     </div>
+                    <button
+                      className="text-button"
+                      onClick={() => setForm("goal_schedule:" + g.id)}
+                    >
+                      Automate savings
+                      <ArrowRight size={16} />
+                    </button>
                   </section>
                 ))}
               </div>
+              {!!workspace.schedules?.length && (
+                <>
+                  <div className="section-heading">
+                    <h2>Recurring savings</h2>
+                  </div>
+                  {[...workspace.schedules]
+                    .sort((a: Item, b: Item) =>
+                      b.authorizedAt.localeCompare(a.authorizedAt),
+                    )
+                    .slice(0, 10)
+                    .map((schedule: Item) => (
+                      <section className="member" key={schedule.id}>
+                        <div>
+                          <h3>{schedule.goalName}</h3>
+                          <p>
+                            {money(schedule.amountKobo)} {schedule.frequency} at
+                            09:00 WAT
+                          </p>
+                          <p>
+                            {schedule.status === "ACTIVE"
+                              ? `Next ${schedule.nextDate} · Ends ${schedule.endDate}`
+                              : schedule.status === "CANCELLED"
+                                ? "Cancelled. Earlier savings are unchanged."
+                                : "Completed."}
+                          </p>
+                        </div>
+                        {schedule.status === "ACTIVE" && (
+                          <div className="inline-actions">
+                            <button
+                              className="text-button"
+                              disabled={busy}
+                              onClick={() =>
+                                setForm(
+                                  "goal_schedule:" +
+                                    schedule.goalId +
+                                    ":" +
+                                    schedule.id,
+                                )
+                              }
+                            >
+                              Change
+                            </button>
+                            <button
+                              className="text-button"
+                              disabled={busy}
+                              onClick={() =>
+                                void guarded(async () => {
+                                  await api(
+                                    "savings/schedules/" +
+                                      schedule.id +
+                                      "/cancel",
+                                    {},
+                                  );
+                                  await refresh();
+                                })
+                              }
+                            >
+                              Cancel future runs
+                            </button>
+                          </div>
+                        )}
+                      </section>
+                    ))}
+                  {workspace.savingsRuns
+                    ?.filter((run: Item) => run.status !== "SETTLED")
+                    .slice(0, 5)
+                    .map((run: Item) => (
+                      <p className="review-note" key={run.id}>
+                        {run.status === "SKIPPED_INSUFFICIENT_FUNDS"
+                          ? `Scheduled saving skipped on ${run.date}: available funds were too low.`
+                          : `${run.missedRuns} missed saving runs skipped. No catch-up debit was made.`}
+                      </p>
+                    ))}
+                </>
+              )}
               {!workspace.goals.length && (
                 <Empty
                   icon={Sprout}
@@ -1089,13 +1171,14 @@ function App() {
                     );
                   })
                 }
-                approve={(pin: string) =>
+                approve={(pin: string, standingConsent: boolean) =>
                   guarded(async () => {
                     try {
                       setPlan(
                         await api("plans/" + plan.id + "/approve", {
                           revision: plan.revision,
                           pin,
+                          ...(standingConsent ? { standingConsent: true } : {}),
                         }),
                       );
                     } catch (error) {
@@ -1432,6 +1515,14 @@ function PlanView({
 }: any) {
   const [pin, setPin] = useState("");
   const [editing, setEditing] = useState(false);
+  const [scheduleConsent, setScheduleConsent] = useState(false);
+  const hasSchedule = plan.spec.some(
+    (task: Item) => task.input.kind === "goal_schedule",
+  );
+  useEffect(() => {
+    setScheduleConsent(false);
+    setPin("");
+  }, [plan.id, plan.revision]);
   const ready = plan.status === "READY",
     running = ["RUNNING", "PENDING"].includes(plan.status),
     cashOnly = plan.spec.every((task: Item) => task.input.kind === "ajo_cash"),
@@ -1545,6 +1636,9 @@ function PlanView({
                     )}
                   </div>
                   {t.allocation && <AllocationDetails value={t.allocation} />}
+                  {t.savingsSchedule && (
+                    <ScheduleDetails value={t.savingsSchedule} />
+                  )}
                 </div>
               );
             })}
@@ -1578,12 +1672,26 @@ function PlanView({
                 className="pin-form"
                 onSubmit={(e) => {
                   e.preventDefault();
-                  if (busy || pin.length !== 4) return;
+                  if (
+                    busy ||
+                    pin.length !== 4 ||
+                    (hasSchedule && !scheduleConsent)
+                  )
+                    return;
                   const value = pin;
                   setPin("");
-                  void approve(value);
+                  void approve(value, scheduleConsent);
                 }}
               >
+                {hasSchedule && (
+                  <AgreementCheck
+                    checked={scheduleConsent}
+                    onChange={setScheduleConsent}
+                  >
+                    I authorize the recurring amounts and dates above, up to the
+                    maximum shown. I can cancel future runs.
+                  </AgreementCheck>
+                )}
                 <label htmlFor="approval-pin">
                   Your 4-digit transaction PIN
                 </label>
@@ -1613,7 +1721,11 @@ function PlanView({
                   </button>
                   <button
                     className="primary"
-                    disabled={busy || pin.length !== 4}
+                    disabled={
+                      busy ||
+                      pin.length !== 4 ||
+                      (hasSchedule && !scheduleConsent)
+                    }
                   >
                     {busy ? (
                       <>
@@ -1717,7 +1829,7 @@ function Modal({
   );
 }
 function TaskForm({ type, w, close, add, save, busy, error }: any) {
-  const [kind, id] = type.split(":"),
+  const [kind, id, replacesId] = type.split(":"),
     [selected, setSelected] = useState(w.products[0].id);
   const [bankCode, setBankCode] = useState(""),
     [accountNumber, setAccountNumber] = useState(""),
@@ -1731,6 +1843,9 @@ function TaskForm({ type, w, close, add, save, busy, error }: any) {
     goal_create: "Start a savings goal",
     goal_deposit: "Add to your goal",
     goal_withdraw: "Withdraw savings",
+    goal_schedule: replacesId
+      ? "Change recurring savings"
+      : "Automate your savings",
     ajo_book: "Create a collection book",
     ajo_join: "Join a collection book",
     ajo_member: "Add a cash member",
@@ -1798,6 +1913,15 @@ function TaskForm({ type, w, close, add, save, busy, error }: any) {
           if (kind === "goal_create") task.name = data.name;
           if (kind === "goal_deposit" || kind === "goal_withdraw")
             task.goalId = id;
+          if (kind === "goal_schedule")
+            task = {
+              ...task,
+              goalId: id,
+              frequency: data.frequency,
+              startDate: data.startDate,
+              endDate: data.endDate,
+              ...(replacesId ? { replacesId } : {}),
+            };
           if (kind === "service")
             task = { ...task, productId: selected, customer: data.customer };
           if (kind.startsWith("ajo_")) {
@@ -1978,9 +2102,11 @@ function TaskForm({ type, w, close, add, save, busy, error }: any) {
           <label>
             {kind === "ajo_join" || kind === "ajo_member"
               ? "Daily contribution (₦)"
-              : kind === "ajo_payout"
-                ? "Principal to pay out (₦)"
-                : "Amount (₦)"}
+              : kind === "goal_schedule"
+                ? "Amount each time (₦)"
+                : kind === "ajo_payout"
+                  ? "Principal to pay out (₦)"
+                  : "Amount (₦)"}
             <input
               key={selected}
               name="amount"
@@ -1997,9 +2123,13 @@ function TaskForm({ type, w, close, add, save, busy, error }: any) {
               step="0.01"
               required
               defaultValue={
-                kind === "service" && product.min === product.max
-                  ? product.min / 100
-                  : undefined
+                kind === "goal_schedule" && replacesId
+                  ? w.schedules.find(
+                      (schedule: Item) => schedule.id === replacesId,
+                    )?.amountKobo / 100
+                  : kind === "service" && product.min === product.max
+                    ? product.min / 100
+                    : undefined
               }
               readOnly={kind === "service" && product.min === product.max}
             />
@@ -2028,6 +2158,53 @@ function TaskForm({ type, w, close, add, save, busy, error }: any) {
               required
             />
           </label>
+        )}
+        {kind === "goal_schedule" && (
+          <>
+            <label>
+              How often
+              <select
+                name="frequency"
+                defaultValue={
+                  w.schedules?.find(
+                    (schedule: Item) => schedule.id === replacesId,
+                  )?.frequency || "daily"
+                }
+              >
+                <option value="daily">Daily</option>
+                <option value="weekly">Weekly</option>
+              </select>
+            </label>
+            <label>
+              First run
+              <input
+                name="startDate"
+                type="date"
+                min={new Date(Date.now() + 90000000).toISOString().slice(0, 10)}
+                defaultValue={new Date(Date.now() + 90000000)
+                  .toISOString()
+                  .slice(0, 10)}
+                required
+              />
+            </label>
+            <label>
+              Last run
+              <input
+                name="endDate"
+                type="date"
+                min={new Date(Date.now() + 90000000).toISOString().slice(0, 10)}
+                defaultValue={new Date(Date.now() + 30 * 86400000 + 3600000)
+                  .toISOString()
+                  .slice(0, 10)}
+                required
+              />
+            </label>
+            <p>
+              Runs at 09:00 WAT. You will review the amount, dates and maximum
+              total before approving with your PIN. Missed or unfunded runs are
+              skipped, with no catch-up debit.
+            </p>
+          </>
         )}
         {kind === "ajo_cash" && (
           <label>
@@ -2109,9 +2286,17 @@ function Receipt({
           <p>
             {r.kind === "ajo_cash"
               ? "Cash recorded successfully"
-              : "Successfully completed"}
+              : r.kind === "goal_schedule"
+                ? "Savings instruction saved"
+                : "Successfully completed"}
           </p>
-          <h2>{money(r.amountKobo)}</h2>
+          <h2>
+            {r.savingsSchedule
+              ? money(r.savingsSchedule.amountKobo) +
+                " " +
+                r.savingsSchedule.frequency
+              : money(r.amountKobo)}
+          </h2>
           <span>{r.label}</span>
         </div>
         <div className="receipt-details">
@@ -2140,6 +2325,7 @@ function Receipt({
           ))}
         </div>
         {r.allocation && <AllocationDetails value={r.allocation} />}
+        {r.savingsSchedule && <ScheduleDetails value={r.savingsSchedule} />}
         <a className="primary" href={"/api/receipts/" + r.id + ".pdf"} download>
           <Download size={17} />
           Download receipt
@@ -2206,6 +2392,26 @@ function Receipt({
   );
 }
 
+function ScheduleDetails({ value }: { value: Item }) {
+  return (
+    <section className="schedule-terms">
+      <strong>
+        {money(value.amountKobo)} {value.frequency} for {value.goalName}
+      </strong>
+      <p>
+        {value.startDate} to {value.endDate}, at 09:00 WAT.
+      </p>
+      <p>
+        Up to {value.maximumRuns} runs. Maximum authorized:{" "}
+        {money(value.maximumKobo)}. No one-off debit now.
+      </p>
+      <p>
+        Missed or unfunded runs are skipped. Cancel future runs in Savings at
+        any time.
+      </p>
+    </section>
+  );
+}
 function AllocationDetails({ value }: { value: Item }) {
   const periods = value.periods as {
       date: string;

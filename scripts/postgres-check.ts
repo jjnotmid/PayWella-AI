@@ -5,6 +5,8 @@ import { openStore } from "../src/db.ts";
 import { Core } from "../src/core.ts";
 import { recordDelivery } from "../src/whatsapp-delivery.ts";
 import { connectTools } from "../src/ai/mcp.ts";
+import { runSchedules } from "../src/savings-schedules.ts";
+import { lagosDate } from "../src/ajo-allocation.ts";
 
 const source = process.env.PG_TEST_URL;
 if (!source)
@@ -203,6 +205,34 @@ try {
     (await core.workspace(saver)).members.find((m) => m.id === feeMember.id)!
       .feePaidKobo,
     10000,
+  );
+  const startDate = lagosDate(Date.now() + 86400000),
+    endDate = lagosDate(Date.now() + 7 * 86400000);
+  const recurring = await core.prepare(owner, {
+    tasks: [
+      {
+        kind: "goal_schedule",
+        name: "Recurring check",
+        amountKobo: 20000,
+        frequency: "daily",
+        startDate,
+        endDate,
+      },
+    ],
+  });
+  await core.approve(owner, recurring.plan.id, 1, "1234", true);
+  await core.drain();
+  const beforeRun = (await core.workspace(owner)).balanceKobo;
+  await Promise.all([
+    runSchedules(core, Date.parse(startDate + "T09:00:00+01:00")),
+    runSchedules(core, Date.parse(startDate + "T09:00:00+01:00")),
+  ]);
+  assert.equal((await core.workspace(owner)).balanceKobo, beforeRun - 20000);
+  assert.equal(
+    (await core.records(owner, "savings_run")).filter(
+      (run) => run.status === "SETTLED",
+    ).length,
+    1,
   );
   process.stdout.write(
     "PostgreSQL checks passed: concurrent approval, parallel settlement, revisions, statements, Ajo allocation and delivery-status races, RLS and immutable ledger.\n",
