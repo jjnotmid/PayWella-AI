@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 import {
   ArrowRight,
   FileCheck2,
@@ -6,10 +6,71 @@ import {
   ShieldCheck,
   UserRound,
   Building2,
+  Upload,
 } from "lucide-react";
 import { AgreementCheck } from "./ajo-join.js";
 
 type Item = Record<string, any>;
+function EvidenceUpload({
+  name,
+  label,
+  hint,
+  disabled,
+}: {
+  name: string;
+  label: string;
+  hint: string;
+  disabled: boolean;
+}) {
+  const id = useId();
+  const [filename, setFilename] = useState("");
+  const [error, setError] = useState("");
+  return (
+    <label className="evidence-field">
+      <span>{label}</span>
+      <span className={"evidence-picker" + (disabled ? " disabled" : "")}>
+        <Upload size={21} aria-hidden="true" />
+        <span>
+          <strong>{filename ? "Change file" : "Choose file"}</strong>
+          <span>{filename || "PDF, JPEG or PNG · up to 1 MB"}</span>
+        </span>
+        <input
+          type="file"
+          name={name}
+          accept="application/pdf,image/jpeg,image/png"
+          aria-label={label}
+          aria-describedby={id}
+          required
+          disabled={disabled}
+          onChange={(event) => {
+            const file = event.currentTarget.files?.[0];
+            if (!file) return;
+            if (
+              !file.size ||
+              file.size > 1048576 ||
+              !["application/pdf", "image/jpeg", "image/png"].includes(
+                file.type,
+              )
+            ) {
+              event.currentTarget.value = "";
+              setFilename("");
+              setError("Choose a PDF, JPEG or PNG file smaller than 1 MB.");
+              return;
+            }
+            setFilename(file.name);
+            setError("");
+          }}
+        />
+      </span>
+      <small id={id}>{hint}</small>
+      {error && (
+        <span className="field-error" role="alert">
+          {error}
+        </span>
+      )}
+    </label>
+  );
+}
 async function evidence(file: File) {
   if (
     !file.size ||
@@ -162,32 +223,19 @@ export function OrganizerApplicationForm({
             disabled={busy}
           />
         </label>
-        <label>
-          Proof of address
-          <input
-            type="file"
-            name="addressProof"
-            accept="application/pdf,image/jpeg,image/png"
-            required
+        <EvidenceUpload
+          name="addressProof"
+          label="Proof of address"
+          hint="A document showing your name and address."
+          disabled={busy}
+        />
+        {type === "business" && (
+          <EvidenceUpload
+            name="registrationProof"
+            label="CAC document"
+            hint="Your business registration certificate or status report."
             disabled={busy}
           />
-          <small>
-            A document showing your name and address. PDF, JPEG or PNG, up to 1
-            MB.
-          </small>
-        </label>
-        {type === "business" && (
-          <label>
-            CAC document
-            <input
-              type="file"
-              name="registrationProof"
-              accept="application/pdf,image/jpeg,image/png"
-              required
-              disabled={busy}
-            />
-            <small>PDF, JPEG or PNG, up to 1 MB.</small>
-          </label>
         )}
         <AgreementCheck checked={consent} onChange={setConsent}>
           I confirm these details are correct and agree to their use for

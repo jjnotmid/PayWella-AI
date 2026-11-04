@@ -90,7 +90,6 @@ function App() {
     [receiptGroup, setReceiptGroup] = useState<Item[]>([]),
     [receiptIndex, setReceiptIndex] = useState(0),
     [form, setForm] = useState(""),
-    [drafts, setDrafts] = useState<Item[]>([]),
     [busy, setBusy] = useState(false),
     [theme, setTheme] = useState(initialTheme),
     [reply, setReply] = useState(""),
@@ -123,6 +122,33 @@ function App() {
     if (theme === "system") delete document.documentElement.dataset.theme;
     localStorage.setItem("pw-theme", theme);
   }, [theme]);
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    const update = () => {
+      const root = document.documentElement;
+      root.style.setProperty(
+        "--viewport-height",
+        `${viewport?.height || window.innerHeight}px`,
+      );
+      root.style.setProperty(
+        "--viewport-offset",
+        `${viewport?.offsetTop || 0}px`,
+      );
+      root.dataset.keyboard =
+        viewport && viewport.height < window.innerHeight * 0.75
+          ? "open"
+          : "closed";
+    };
+    update();
+    viewport?.addEventListener("resize", update);
+    viewport?.addEventListener("scroll", update);
+    window.addEventListener("resize", update);
+    return () => {
+      viewport?.removeEventListener("resize", update);
+      viewport?.removeEventListener("scroll", update);
+      window.removeEventListener("resize", update);
+    };
+  }, []);
   useEffect(() => {
     let mounted = true;
     const requestedView = new URLSearchParams(window.location.search).get(
@@ -305,15 +331,6 @@ function App() {
       setBusy(false);
     }
   }
-  async function prepare() {
-    await guarded(async () => {
-      const result = await api("plans", { tasks: drafts });
-      setPlan(result.plan);
-      setPage("home");
-      setDrafts([]);
-      setForm("");
-    });
-  }
   async function openReceipt(id: string) {
     await guarded(async () => {
       setReceiptGroup([]);
@@ -329,13 +346,18 @@ function App() {
       setReceipt(values[0]);
     });
   }
-  function addTask(task: Item) {
-    if (drafts.length >= 5) {
-      setError("You can review up to five tasks together.");
-      return;
-    }
-    setDrafts((v) => [...v, task]);
-    setForm("");
+  async function reviewTask(task: Item) {
+    await guarded(async () => {
+      const result = await api("plans", { tasks: [task] });
+      setPlan(result.plan);
+      setPage("home");
+      setForm("");
+      requestAnimationFrame(() =>
+        document
+          .querySelector(".plan-panel")
+          ?.scrollIntoView({ block: "start" }),
+      );
+    });
   }
   async function ask(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -630,6 +652,7 @@ function App() {
               ? "Secure review"
               : `Hello, ${workspace?.user?.name?.split(" ")[0] || "there"}`}
           </div>
+          <WhatsAppLink number={whatsappNumber} compact />
           <Theme value={theme} change={setTheme} />
           <div className="avatar">{(session.user?.name || "P").charAt(0)}</div>
         </header>
@@ -647,7 +670,9 @@ function App() {
               </span>
               <h1>
                 {restricted || (plan && page === "home")
-                  ? "Your tasks, together."
+                  ? plan?.spec.length === 1
+                    ? "Review your transaction."
+                    : "Your tasks, together."
                   : heading}
               </h1>
             </div>
@@ -686,7 +711,7 @@ function App() {
                   <div className="eyebrow">JUST ASK PAYWELLA</div>
                   <h2>
                     One message.
-                    <br />A few things done.
+                    <br /> A few things done.
                   </h2>
                   <p>
                     Prepare payments and savings together. Check the details,
@@ -710,7 +735,11 @@ function App() {
                       }
                       disabled={assistantBusy}
                     >
-                      <ArrowRight size={20} />
+                      {assistantBusy ? (
+                        <LoaderCircle className="spin" size={20} />
+                      ) : (
+                        <ArrowRight size={20} />
+                      )}
                     </button>
                   </form>
                   {reply && (
@@ -733,7 +762,18 @@ function App() {
                     </>
                   )}
                   {assistantBusy && (
-                    <TaskProgress value={assistantProgress as any} />
+                    <div role="status" aria-live="polite">
+                      <p className="typing-copy">
+                        PayWella is preparing your request…
+                      </p>
+                      <TaskProgress value={assistantProgress as any} />
+                    </div>
+                  )}
+                  {whatsappNumber && (
+                    <div className="whatsapp-entry">
+                      <p>Prefer to speak? Send PayWella a voice note.</p>
+                      <WhatsAppLink number={whatsappNumber} />
+                    </div>
                   )}
                 </section>
               </div>
@@ -1188,30 +1228,6 @@ function App() {
               )}
             </>
           )}
-          {drafts.length > 0 && (
-            <section className="draft-tray">
-              <div>
-                <strong>
-                  {drafts.length} {drafts.length === 1 ? "task" : "tasks"} ready
-                  to review
-                </strong>
-                <span>Nothing moves until you approve.</span>
-              </div>
-              <button className="text-button" onClick={() => setDrafts([])}>
-                Clear
-              </button>
-              <button className="primary" onClick={prepare} disabled={busy}>
-                {busy ? (
-                  <LoaderCircle className="spin" />
-                ) : (
-                  <>
-                    Review together
-                    <ArrowRight size={17} />
-                  </>
-                )}
-              </button>
-            </section>
-          )}
           {plan &&
             (page === "home" || restricted) &&
             (restricted || !["CANCELLED", "EXPIRED"].includes(plan.status)) && (
@@ -1319,7 +1335,7 @@ function App() {
             type={form}
             w={workspace}
             close={() => setForm("")}
-            add={addTask}
+            add={reviewTask}
             save={async (path: string, data: unknown) => {
               await guarded(async () => {
                 await api(path, data);
@@ -1376,6 +1392,32 @@ function App() {
         />
       )}
     </div>
+  );
+}
+function WhatsAppLink({
+  number,
+  compact = false,
+}: {
+  number: string | null;
+  compact?: boolean;
+}) {
+  if (!number || !/^\d{8,15}$/.test(number)) return null;
+  return (
+    <a
+      className={
+        compact ? "whatsapp-link whatsapp-link-compact" : "whatsapp-link"
+      }
+      href={"https://wa.me/" + number + "?text=Hi"}
+      aria-label="Open PayWella on WhatsApp"
+    >
+      <MessageCircle size={20} />
+      {!compact && (
+        <>
+          <span>Open WhatsApp</span>
+          <ArrowUpRight size={17} />
+        </>
+      )}
+    </a>
   );
 }
 function Theme({
@@ -1604,6 +1646,9 @@ function PlanView({
   }, [plan.id, plan.revision]);
   const ready = plan.status === "READY",
     running = ["RUNNING", "PENDING"].includes(plan.status),
+    singleTransfer =
+      plan.spec.length === 1 &&
+      ["bank_transfer", "p2p"].includes(plan.spec[0].input.kind),
     cashOnly = plan.spec.every((task: Item) => task.input.kind === "ajo_cash"),
     total = plan.spec.reduce(
       (n: number, t: Item) => n + t.amountKobo + t.feeKobo,
@@ -1631,11 +1676,17 @@ function PlanView({
           </span>
           <h2 id="review-title">
             {ready
-              ? "Let’s check the details."
+              ? singleTransfer
+                ? "Confirm your transfer."
+                : "Let’s check the details."
               : running
-                ? "Your tasks are underway."
+                ? singleTransfer
+                  ? "Sending your money."
+                  : "Your tasks are underway."
                 : plan.status === "SUCCEEDED"
-                  ? "All done. Every task confirmed."
+                  ? singleTransfer
+                    ? "Transfer successful."
+                    : "All done. Every task confirmed."
                   : plan.status === "PARTIAL"
                     ? "Some tasks need your attention."
                     : plan.status === "EXPIRED"
@@ -1724,16 +1775,28 @@ function PlanView({
           </div>
           {ready && (
             <>
+              {singleTransfer && (
+                <div className="transfer-fee">
+                  <span>Transfer fee</span>
+                  <strong>{money(plan.spec[0].feeKobo)}</strong>
+                </div>
+              )}
               <div className="review-total">
                 <span>
-                  {cashOnly ? "Cash to record" : "Total task amounts"}
+                  {cashOnly
+                    ? "Cash to record"
+                    : singleTransfer
+                      ? "Total amount"
+                      : "Total task amounts"}
                 </span>
                 <strong>{money(total)}</strong>
               </div>
               <p className="review-note">
                 {cashOnly
                   ? "No wallet debit. This records cash collected, not bank-settled savings."
-                  : "Includes all reviewed task amounts. Check each direction above. Cash records do not debit your wallet; savings withdrawals return funds to it."}
+                  : singleTransfer
+                    ? "Confirm the recipient above. Your PIN authorizes this transfer."
+                    : "Includes all reviewed task amounts. Check each direction above. Cash records do not debit your wallet; savings withdrawals return funds to it."}
               </p>
               <button
                 type="button"
@@ -1744,7 +1807,7 @@ function PlanView({
                   setEditing(true);
                 }}
               >
-                Edit these tasks
+                {singleTransfer ? "Edit transfer details" : "Edit these tasks"}
                 <ArrowRight size={16} />
               </button>
               <form
@@ -1813,7 +1876,11 @@ function PlanView({
                       </>
                     ) : (
                       <>
-                        Approve {plan.spec.length > 1 ? "all tasks" : "task"}
+                        {singleTransfer
+                          ? "Send money"
+                          : plan.spec.length > 1
+                            ? "Approve all tasks"
+                            : "Approve"}
                         <ArrowRight size={17} />
                       </>
                     )}
@@ -2007,7 +2074,7 @@ function TaskForm({ type, w, close, add, save, busy, error }: any) {
             task.memberId = id;
             if (kind === "ajo_cash") task.date = data.date;
           }
-          add(task);
+          if (!busy) void add(task);
         }}
       >
         {(kind === "goal_create" ||
@@ -2323,7 +2390,9 @@ function TaskForm({ type, w, close, add, save, busy, error }: any) {
               {" "}
               {["ajo_join", "ajo_book", "ajo_member"].includes(kind)
                 ? "Save details"
-                : "Add to review"}
+                : kind === "bank_transfer" || kind === "p2p"
+                  ? "Review transfer"
+                  : "Continue to review"}
               <ArrowRight size={17} />
             </>
           )}

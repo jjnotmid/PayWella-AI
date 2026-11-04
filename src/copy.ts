@@ -4,11 +4,11 @@ export const errors: Record<string, string> = {
   BANK_CONFIRMATION_REQUIRED:
     "Which bank is that account with? The amount and other tasks are saved. A bank cannot be chosen from the account number alone.",
   AI_REQUEST_TOO_LARGE:
-    "The assistant’s current provider limit is too small for this request. Your details are saved. No new payment was authorized.",
+    "PayWella AI could not prepare that request right now. Your details are saved. No new payment was authorized.",
   AI_MODEL_UNAVAILABLE:
-    "The selected AI model is not available to this project. Your request is saved. No new payment was authorized.",
+    "PayWella AI is temporarily unavailable. Your request is saved. No new payment was authorized.",
   AI_KEY_REJECTED:
-    "The assistant could not authenticate with its provider. Your request is saved. Please try again after the connection is restored.",
+    "PayWella AI is temporarily unavailable. Your request is saved. No new payment was authorized.",
   VISION_NOT_CONFIGURED:
     "Picture reading is not connected yet. You can send the account details as text or a voice note instead.",
   VOICE_REQUEST_TOO_LONG:
@@ -108,9 +108,9 @@ export const errors: Record<string, string> = {
   AI_NOT_CONFIGURED:
     "The assistant is not connected yet. You can still use the payment and savings forms.",
   AI_QUOTA:
-    "The assistant has reached its provider limit. Please try again shortly. No new payment was authorized.",
+    "PayWella AI is temporarily unavailable. Your unfinished request is saved. You can still use the payment and savings forms. No new payment was authorized.",
   AI_DAILY_QUOTA:
-    "The assistant’s daily allowance is used up. It resets at 1:00 a.m. Lagos time. You can still use the payment and savings forms. Your unfinished request is saved, and no new payment was authorized.",
+    "PayWella AI is temporarily unavailable. Your unfinished request is saved. You can still use the payment and savings forms. No new payment was authorized.",
   AI_UNAVAILABLE:
     "The assistant could not connect. Your unfinished request is saved. Please try again.",
   AI_NEEDS_RETRY:

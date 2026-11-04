@@ -5,6 +5,7 @@ import { toSpeechWav } from "./audio.ts";
 import { readGroqSpeech, readGroqImage } from "./groq-media.ts";
 import { readCloudflareImage } from "./cloudflare-vision.ts";
 import { readMainSpeech } from "./main-speech.ts";
+import { providerFailover } from "./failover.ts";
 import type { Language } from "../contracts.ts";
 export type Media = { bytes: Buffer; mime: string; sha: string };
 export const MediaResult = z.discriminatedUnion("kind", [
@@ -184,6 +185,39 @@ export function createMediaReader(
   fetcher: typeof fetch = fetch,
   convert: (media: Media) => Promise<Buffer> = toSpeechWav,
 ): MediaReader {
+  const cloudflareImage = async (
+    media: Media,
+    prompt: string,
+    _question: string,
+    _language: Language,
+  ) =>
+    parseMediaResult(
+      await readCloudflareImage(
+        media,
+        env,
+        prompt,
+        z.toJSONSchema(MediaResult),
+        fetcher,
+      ),
+      media,
+    );
+  const readImage =
+    env.AI_FALLBACK_PROVIDER === "gemini" && env.GEMINI_API_KEY
+      ? providerFailover(
+          cloudflareImage,
+          (
+            media: Media,
+            _prompt: string,
+            question: string,
+            language: Language,
+          ) =>
+            createMediaReader(
+              { ...env, IMAGE_PROVIDER: "gemini", AI_FALLBACK_PROVIDER: "" },
+              fetcher,
+              convert,
+            ).read(media, question, language),
+        )
+      : cloudflareImage;
   return {
     async read(media, question = "", language = "en") {
       const provider =
@@ -214,14 +248,7 @@ export function createMediaReader(
       if (provider === "cloudflare") {
         if (!media.mime.startsWith("image/"))
           throw new AppError("MEDIA_PROVIDER_NOT_READY", 503);
-        const value = await readCloudflareImage(
-          media,
-          env,
-          prompt,
-          z.toJSONSchema(MediaResult),
-          fetcher,
-        );
-        return parseMediaResult(value, media);
+        return readImage(media, prompt, question, language);
       }
       if (
         provider === "gemini" &&

@@ -28,6 +28,9 @@ export function aiReadiness(env: NodeJS.ProcessEnv) {
           : env.GEMINI_MODEL || "gemini-3.5-flash-lite";
   return {
     aiProvider: provider,
+    fallbackProvider: env.AI_FALLBACK_PROVIDER || null,
+    fallbackConfigured:
+      env.AI_FALLBACK_PROVIDER === "gemini" && !!env.GEMINI_API_KEY,
     model,
     mediaProvider,
     imageProvider,

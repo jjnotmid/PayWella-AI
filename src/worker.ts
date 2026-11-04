@@ -85,10 +85,22 @@ export class Worker {
     const job = await this.core.claim("agent");
     if (!job) return;
     let indicator: Promise<unknown> | null = null;
-    if (job.id.startsWith("wa:"))
-      indicator = showTyping(this.env, job.id.slice(3), this.fetcher).catch(
-        () => {},
-      );
+    let typingTimer: ReturnType<typeof setInterval> | undefined;
+    if (job.id.startsWith("wa:")) {
+      let refreshing = false;
+      const refreshTyping = () => {
+        if (refreshing) return;
+        refreshing = true;
+        indicator = showTyping(this.env, job.id.slice(3), this.fetcher)
+          .catch(() => {})
+          .finally(() => {
+            refreshing = false;
+          });
+      };
+      refreshTyping();
+      typingTimer = setInterval(refreshTyping, 18000);
+      typingTimer.unref();
+    }
     try {
       if (job.created_at < future(-86400000))
         throw new AppError("REQUEST_EXPIRED", 410);
@@ -453,6 +465,7 @@ export class Worker {
         }
       });
     } finally {
+      clearInterval(typingTimer);
       await indicator;
     }
   }

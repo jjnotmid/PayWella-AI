@@ -186,6 +186,7 @@ export class Agent {
             : "Understanding your request",
         });
         const response = await this.model.complete(messages, tools.specs);
+        if (response.provider) trace.provider = response.provider;
         if (
           response.calls.filter((call) =>
             ["prepare_plan", "revise_plan"].includes(call.name),

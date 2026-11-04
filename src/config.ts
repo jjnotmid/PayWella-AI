@@ -45,6 +45,8 @@ export function runtimeConfig(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
     );
   if (!["gemini", "meta", "groq", "cloudflare"].includes(env.AI_PROVIDER!))
     throw Error("AI_PROVIDER must be cloudflare, groq, gemini or meta.");
+  if (env.AI_FALLBACK_PROVIDER && env.AI_FALLBACK_PROVIDER !== "gemini")
+    throw Error("AI_FALLBACK_PROVIDER must be gemini when enabled.");
   if (!["gemini", "meta", "groq"].includes(env.MEDIA_PROVIDER!))
     throw Error("MEDIA_PROVIDER must be groq, gemini or meta.");
   if (!["cloudflare", "gemini", "meta", "groq"].includes(env.IMAGE_PROVIDER!))

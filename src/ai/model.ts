@@ -1,6 +1,7 @@
 import { AppError } from "../contracts.ts";
 import { createGroqModel } from "./groq.ts";
 import { createCloudflareModel } from "./cloudflare.ts";
+import { providerFailover } from "./failover.ts";
 export type ModelMessage = {
   role: "system" | "user" | "assistant" | "tool";
   content: string;
@@ -20,7 +21,12 @@ export interface Model {
   complete(
     messages: ModelMessage[],
     tools: ToolSpec[],
-  ): Promise<{ text: string; calls: ModelCall[]; raw?: any }>;
+  ): Promise<{
+    text: string;
+    calls: ModelCall[];
+    raw?: any;
+    provider?: string;
+  }>;
 }
 async function result(response: Response) {
   if (!response.ok)
@@ -42,7 +48,28 @@ export function createModel(
 ): Model {
   const provider = env.AI_PROVIDER || "gemini";
   if (provider === "groq") return createGroqModel(env, fetcher);
-  if (provider === "cloudflare") return createCloudflareModel(env, fetcher);
+  if (provider === "cloudflare") {
+    const primary = createCloudflareModel(env, fetcher);
+    if (env.AI_FALLBACK_PROVIDER !== "gemini" || !env.GEMINI_API_KEY)
+      return primary;
+    const secondary = createModel(
+      { ...env, AI_PROVIDER: "gemini", AI_FALLBACK_PROVIDER: "" },
+      fetcher,
+    );
+    return {
+      provider: primary.provider,
+      complete: providerFailover(
+        async (messages: ModelMessage[], tools: ToolSpec[]) => ({
+          ...(await primary.complete(messages, tools)),
+          provider: "cloudflare",
+        }),
+        async (messages: ModelMessage[], tools: ToolSpec[]) => ({
+          ...(await secondary.complete(messages, tools)),
+          provider: "gemini",
+        }),
+      ),
+    };
+  }
   if (!["gemini", "meta"].includes(provider))
     throw new Error("Unsupported AI_PROVIDER");
   return {
@@ -118,8 +145,24 @@ export function createModel(
                 },
               }
             : { text: m.content };
-        if (m.role === "assistant" && m.raw) {
+        if (m.role === "assistant" && Array.isArray(m.raw?.parts)) {
           contents.push(m.raw);
+          continue;
+        }
+        if (m.role === "assistant" && m.calls?.length) {
+          contents.push({
+            role: "model",
+            parts: [
+              ...(m.content ? [{ text: m.content }] : []),
+              ...m.calls.map((call) => ({
+                functionCall: {
+                  name: call.name,
+                  args: call.arguments,
+                  id: call.id,
+                },
+              })),
+            ],
+          });
           continue;
         }
         const role = m.role === "assistant" ? "model" : "user";
@@ -138,7 +181,7 @@ export function createModel(
         `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
         {
           method: "POST",
-          signal: AbortSignal.timeout(15000),
+          signal: AbortSignal.timeout(30000),
           headers: {
             "x-goog-api-key": key,
             "content-type": "application/json",
@@ -155,15 +198,19 @@ export function createModel(
               ],
             },
             contents,
-            tools: [
-              {
-                functionDeclarations: tools.map((t) => ({
-                  name: t.name,
-                  description: t.description,
-                  parametersJsonSchema: t.inputSchema,
-                })),
-              },
-            ],
+            ...(tools.length
+              ? {
+                  tools: [
+                    {
+                      functionDeclarations: tools.map((t) => ({
+                        name: t.name,
+                        description: t.description,
+                        parametersJsonSchema: t.inputSchema,
+                      })),
+                    },
+                  ],
+                }
+              : {}),
             generationConfig: { temperature: 0.15, maxOutputTokens: 1800 },
           }),
         },
