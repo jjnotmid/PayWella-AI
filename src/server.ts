@@ -18,6 +18,8 @@ import { messageControl, whatsappCopy } from "./whatsapp-ui.ts";
 import { recordDelivery, deliveryStatuses } from "./whatsapp-delivery.ts";
 import { FeePolicy, Agreement } from "./ajo-terms.ts";
 import { cancelSchedule } from "./savings-schedules.ts";
+import { submitOrganizerApplication } from "./organizer-applications.ts";
+import { aiReadiness } from "./ai/readiness.ts";
 
 type Session = {
   owner: string;
@@ -102,9 +104,7 @@ export function createApp(core: Core, agent: Agent, env: NodeJS.ProcessEnv) {
         return json(res, {
           status: "ok",
           financialMode: "sandbox",
-          aiConfigured: !!(env.AI_PROVIDER === "meta"
-            ? env.MODEL_API_KEY
-            : env.GEMINI_API_KEY),
+          aiConfigured: aiReadiness(env).aiKey,
           whatsappConfigured: !!(
             env.WHATSAPP_ACCESS_TOKEN &&
             env.WHATSAPP_APP_SECRET &&
@@ -262,7 +262,14 @@ export function createApp(core: Core, agent: Agent, env: NodeJS.ProcessEnv) {
           throw new AppError("FORBIDDEN", 403);
         const data =
           method === "POST"
-            ? JSON.parse((await body(req)).toString() || "{}")
+            ? JSON.parse(
+                (
+                  await body(
+                    req,
+                    path === "/api/organizer/application" ? 3100000 : 18000,
+                  )
+                ).toString() || "{}",
+              )
             : {};
         if (method === "POST" && path === "/api/exchange") {
           const cap = z
@@ -592,6 +599,14 @@ export function createApp(core: Core, agent: Agent, env: NodeJS.ProcessEnv) {
                     ? { progress: agent.open(progress.sealed) }
                     : {}),
                 },
+          );
+        }
+        if (method === "POST" && path === "/api/organizer/application") {
+          workspace(s);
+          return json(
+            res,
+            await submitOrganizerApplication(core, agent, s.owner, data),
+            201,
           );
         }
         const scheduleCancellation = path.match(

@@ -1,4 +1,6 @@
 import { AppError } from "../contracts.ts";
+import { createGroqModel } from "./groq.ts";
+import { createCloudflareModel } from "./cloudflare.ts";
 export type ModelMessage = {
   role: "system" | "user" | "assistant" | "tool";
   content: string;
@@ -39,6 +41,8 @@ export function createModel(
   fetcher: typeof fetch = fetch,
 ): Model {
   const provider = env.AI_PROVIDER || "gemini";
+  if (provider === "groq") return createGroqModel(env, fetcher);
+  if (provider === "cloudflare") return createCloudflareModel(env, fetcher);
   if (!["gemini", "meta"].includes(provider))
     throw new Error("Unsupported AI_PROVIDER");
   return {

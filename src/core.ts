@@ -173,6 +173,7 @@ export class Core {
       beneficiaries,
       schedules,
       savingsRuns,
+      organizerApplications,
     ] = await Promise.all([
       this.getUser(owner),
       this.records(owner, "goal"),
@@ -200,6 +201,7 @@ export class Core {
       this.records(owner, "beneficiary"),
       this.records(owner, "savings_schedule"),
       this.records(owner, "savings_run"),
+      this.records(owner, "organizer_application"),
     ]);
     const totals = new Map(
       balances.rows.map((row) => [
@@ -222,6 +224,7 @@ export class Core {
       user,
       beneficiaries,
       schedules,
+      organizerApplications: organizerApplications.map(({ sealed, ...application }) => application),
       savingsRuns: savingsRuns
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
         .slice(0, 20),
@@ -437,6 +440,12 @@ export class Core {
     }
     const { tasks } = PlanInput.parse(input),
       user = await this.getUser(owner);
+    for (const task of tasks) if (task.kind === "bank_transfer") {
+      const supplied = task.bankCode.trim().toLowerCase();
+      const bank = banks.find(bank => bank.code.toLowerCase() === supplied || bank.name.toLowerCase() === supplied);
+      if (!bank) throw new AppError("INVALID_RECIPIENT");
+      task.bankCode = bank.code;
+    }
     if (!user.ready) throw new AppError("SETUP_REQUIRED");
     const id = edit?.id || randomUUID(),
       quoted: QuotedTask[] = [],

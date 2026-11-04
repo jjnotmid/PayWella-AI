@@ -524,6 +524,7 @@ form label.agreement-check {
   padding: 0;
 }
 .agreement-box {
+  pointer-events: none;
   position: relative;
   display: block;
   width: 22px;
@@ -534,6 +535,7 @@ form label.agreement-check {
   background: var(--panel);
 }
 .agreement-box svg {
+  pointer-events: none;
   position: absolute;
   top: -6px;
   left: 0;
@@ -1979,4 +1981,110 @@ input:disabled {
 .allocation-details p {
   font-size: 0.8rem;
   line-height: 1.5;
+}
+
+.organizer-access {
+  margin: 22px 0;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  background: var(--panel);
+}
+.organizer-access h2 {
+  font-size: 18px;
+}
+.organizer-access p {
+  color: var(--muted);
+  line-height: 1.65;
+}
+.organizer-access p svg {
+  vertical-align: middle;
+  margin-right: 6px;
+}
+.organizer-kind {
+  border: 0;
+  padding: 0;
+  margin: 0 0 6px;
+  display: grid;
+  gap: 10px;
+}
+.organizer-kind legend {
+  margin-bottom: 10px;
+  font-weight: 600;
+}
+.organizer-kind label {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  cursor: pointer;
+}
+.organizer-kind label.selected {
+  border-color: var(--gold);
+  box-shadow: 0 0 0 1px var(--gold);
+  background: var(--soft);
+}
+.organizer-kind input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--gold);
+  flex: 0 0 18px;
+}
+.organizer-kind span {
+  display: grid;
+  gap: 4px;
+}
+.organizer-kind small {
+  color: var(--muted);
+  font-size: 11px;
+}
+.modal textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 90px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--paper);
+  color: var(--ink);
+  padding: 13px;
+  font: inherit;
+}
+.modal input[type="file"] {
+  font-size: 12px;
+  padding: 12px;
+  max-width: 100%;
+}
+.modal label small {
+  display: block;
+  color: var(--muted);
+  font-weight: 400;
+  line-height: 1.6;
+}
+.modal .organizer-kind label {
+  flex-direction: row;
+  align-items: center;
+  padding: 14px;
+  gap: 12px;
+}
+.modal .organizer-kind input {
+  width: 18px;
+  height: 18px;
+  min-height: 18px;
+  flex: 0 0 18px;
+}
+.modal .organizer-kind span {
+  display: grid;
+  gap: 4px;
+  text-align: left;
+}
+.modal .organizer-kind strong {
+  font-size: 13px;
+}
+.receipt-details > div > span {
+  flex: 0 0 106px;
+  max-width: none;
 }

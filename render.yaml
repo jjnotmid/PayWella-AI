@@ -12,9 +12,29 @@ services:
         generateValue: true
       - key: DATABASE_URL
         sync: false
+      - key: DATABASE_SSL_CA
+        value: certs/supabase-root-2021.crt
       - key: PUBLIC_ORIGIN
         sync: false
       - key: AI_PROVIDER
+        value: cloudflare
+      - key: CLOUDFLARE_MODEL
+        value: '@cf/meta/llama-3.3-70b-instruct-fp8-fast'
+      - key: CLOUDFLARE_ACCOUNT_ID
+        sync: false
+      - key: CLOUDFLARE_API_TOKEN
+        sync: false
+      - key: MEDIA_PROVIDER
         value: gemini
+      - key: IMAGE_PROVIDER
+        value: cloudflare
+      - key: CLOUDFLARE_VISION_MODEL
+        value: '@cf/meta/llama-4-scout-17b-16e-instruct'
+      - key: GEMINI_AUDIO_MODEL
+        value: gemini-3.5-transcribe
       - key: GEMINI_API_KEY
+        sync: false
+      - key: INTRON_STT_ENABLED
+        value: 'true'
+      - key: INTRON_API_KEY
         sync: false

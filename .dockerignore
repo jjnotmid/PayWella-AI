@@ -1,6 +1,7 @@
 node_modules
 .git
 .env*
+paywella-ai.env
 .data
 dist
 private

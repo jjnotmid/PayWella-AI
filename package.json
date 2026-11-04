@@ -14,8 +14,12 @@
     "build": "npm run check && vite build",
     "seed": "node --env-file-if-exists=.env.local scripts/seed.ts",
     "doctor": "node --env-file-if-exists=.env.local scripts/doctor.ts",
+    "check:model": "node --env-file-if-exists=.env.local scripts/check-model.ts",
+    "check:agent": "node --env-file-if-exists=.env.local scripts/check-agent.ts",
+    "check:public": "node scripts/check-public.mjs",
     "check:postgres": "node scripts/postgres-check.ts",
-    "organizer": "node --env-file-if-exists=.env.local scripts/grant-organizer.ts"
+    "organizer": "node --env-file-if-exists=.env.local scripts/grant-organizer.ts",
+    "organizer:review": "node --env-file-if-exists=.env.local scripts/review-organizer.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",

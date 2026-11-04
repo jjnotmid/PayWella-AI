@@ -1,0 +1,21 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { acceptPlanState } from "../web/plan-state.ts";
+test("delayed review and polling responses cannot reopen a PIN form or replace terminal receipts", () => {
+  const ready = { id: "plan", revision: 1, status: "READY" };
+  const running = { ...ready, status: "RUNNING" };
+  const pending = { ...ready, status: "PENDING" };
+  const done = { ...ready, status: "SUCCEEDED" };
+  assert.equal(acceptPlanState(running, ready), running);
+  assert.equal(acceptPlanState(pending, ready), pending);
+  assert.equal(acceptPlanState(done, ready), done);
+  assert.equal(acceptPlanState(done, pending), done);
+  assert.equal(acceptPlanState(running, pending), pending);
+  assert.equal(acceptPlanState(pending, done), done);
+  const revised = { ...ready, revision: 2 };
+  assert.equal(acceptPlanState(revised, ready), revised);
+  assert.equal(acceptPlanState(ready, revised), revised);
+  assert.equal(acceptPlanState(done, null), null);
+  const other = { ...ready, id: "different" };
+  assert.equal(acceptPlanState(done, other), other);
+});

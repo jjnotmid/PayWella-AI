@@ -7,3 +7,5 @@ Interface icons are supplied by Lucide under the ISC licence. Their licence is i
 Manrope is distributed under the SIL Open Font License. The font licence is included at `web/public/fonts/LICENSE.txt`.
 
 Noto Sans is used for currency glyph coverage. It is distributed under the SIL Open Font License, included at `web/public/fonts/LICENSE-NOTO.txt`.
+
+`certs/supabase-root-2021.crt` is Supabase’s public root CA certificate, used to verify PostgreSQL TLS. It contains no private key or database credential.

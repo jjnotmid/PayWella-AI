@@ -1,4 +1,26 @@
 export const errors: Record<string, string> = {
+  ACCOUNT_CONFIRMATION_REQUIRED:
+    "Please confirm the complete ten-digit bank account number. A phone number cannot be shortened into an account number. The other task details are saved.",
+  BANK_CONFIRMATION_REQUIRED:
+    "Which bank is that account with? The amount and other tasks are saved. A bank cannot be chosen from the account number alone.",
+  AI_REQUEST_TOO_LARGE:
+    "The assistant’s current provider limit is too small for this request. Your details are saved. No new payment was authorized.",
+  AI_MODEL_UNAVAILABLE:
+    "The selected AI model is not available to this project. Your request is saved. No new payment was authorized.",
+  AI_KEY_REJECTED:
+    "The assistant could not authenticate with its provider. Your request is saved. Please try again after the connection is restored.",
+  VISION_NOT_CONFIGURED:
+    "Picture reading is not connected yet. You can send the account details as text or a voice note instead.",
+  VOICE_REQUEST_TOO_LONG:
+    "That voice request contains too much detail for one review. Send a shorter note with up to five tasks. Nothing was approved.",
+  APPLICATION_PENDING:
+    "Your organizer application is already being reviewed. You do not need to submit it again.",
+  APPLICATION_FILE_INVALID:
+    "That document could not be read. Choose a PDF, JPEG or PNG file smaller than 1 MB.",
+  ORGANIZER_ALREADY_ENABLED:
+    "Organizer access is already enabled for your account. You can create a collection book in Ajo.",
+  APPLICATION_LIMIT:
+    "You have reached today’s application limit. Check your existing application or try again tomorrow.",
   SCHEDULE_CONSENT_REQUIRED:
     "Confirm the recurring amounts, dates and maximum total before authorizing future savings with your PIN.",
   SCHEDULE_DATES_INVALID:

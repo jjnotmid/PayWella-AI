@@ -12,8 +12,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -r
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=build --chown=node:node /app/src ./src
+COPY --from=build --chown=node:node /app/scripts ./scripts
+COPY --from=build --chown=node:node /app/certs ./certs
 COPY --from=build --chown=node:node /app/dist ./dist
 COPY --from=build --chown=node:node /app/web/public ./web/public
+RUN mkdir -p /app/private && chown node:node /app/private
 USER node
 EXPOSE 10000
-CMD ["node", "src/main.ts"]
+CMD ["node", "--env-file-if-exists=/etc/secrets/paywella-ai.env", "src/main.ts"]

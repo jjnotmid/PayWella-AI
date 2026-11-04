@@ -13,6 +13,9 @@ import { available } from "../ledger.ts";
 import type { ToolSpec } from "./model.ts";
 import { FeePolicy } from "../ajo-terms.ts";
 import { cancelSchedule } from "../savings-schedules.ts";
+import { errorCopy } from "../copy.ts";
+import { assertBankSources } from "./bank-grounding.ts";
+import type { BankContext } from "./bank-grounding.ts";
 const empty = z.object({}).strict();
 const readOnlyTools = new Set([
   "get_balance",
@@ -39,8 +42,28 @@ export async function connectTools(
   onClear: () => void = () => {},
   progress: (value: PreparationProgress) => Promise<void> = async () => {},
   onMembershipProposal: (id: string) => void = () => {},
+  bankContext?: BankContext,
 ) {
   await core.getUser(owner);
+  let transferClarificationRequired: string | null = null;
+  async function guardBanks(tasks: any[]) {
+    if (!bankContext) return;
+    if (transferClarificationRequired)
+      throw new AppError(transferClarificationRequired);
+    try {
+      await assertBankSources(core, owner, tasks, bankContext);
+    } catch (error) {
+      if (
+        error instanceof AppError &&
+        [
+          "BANK_CONFIRMATION_REQUIRED",
+          "ACCOUNT_CONFIRMATION_REQUIRED",
+        ].includes(error.code)
+      )
+        transferClarificationRequired = error.code;
+      throw error;
+    }
+  }
   const registry = [
     {
       name: "list_savings_schedules",
@@ -387,6 +410,7 @@ export async function connectTools(
         "Prepare ALL requested tasks together, 1–5, for private review. No execution. Integer kobo: two thousand naira is 200000. Preserve amounts and recipients across clarifications. Ask only genuinely missing details. Never choose a bank from account digits alone.",
       schema: PlanInput,
       run: async (args: unknown) => {
+        await guardBanks(PlanInput.parse(args).tasks);
         const value = await core.prepare(
           owner,
           args,
@@ -410,12 +434,19 @@ export async function connectTools(
     {
       name: "revise_plan",
       description:
-        "Revise one owned unapproved plan when the customer changes its tasks. Include every task they still want. This invalidates the earlier review; it never executes payments.",
+        "Revise one owned unapproved plan when the customer changes its tasks. Include every task they still want. Pass the CURRENT revision from currentPlan or get_plan_status, never increment it yourself. The server creates the next revision. This invalidates the earlier review; it never executes payments.",
       schema: PlanInput.extend({
         id: z.string().uuid(),
-        revision: z.number().int().positive(),
+        revision: z
+          .number()
+          .int()
+          .positive()
+          .describe(
+            "The existing current revision being replaced. Do not add one.",
+          ),
       }).strict(),
       run: async (args: any) => {
+        await guardBanks(args.tasks);
         const value = await core.prepare(owner, { tasks: args.tasks }, null, {
           id: args.id,
           revision: args.revision,
@@ -459,7 +490,12 @@ export async function connectTools(
       schema: z.object({ id: z.string().uuid() }).strict(),
       run: async (args: any) => {
         const p = await core.plan(owner, args.id);
-        return { id: p.id, status: p.status, tasks: p.tasks };
+        return {
+          id: p.id,
+          revision: p.revision,
+          status: p.status,
+          tasks: p.tasks,
+        };
       },
     },
     {
@@ -509,6 +545,17 @@ export async function connectTools(
                   : error instanceof z.ZodError
                     ? "INVALID_TOOL_ARGUMENTS"
                     : "TOOL_FAILED",
+              ...(error instanceof AppError
+                ? { message: errorCopy(error.code) }
+                : {}),
+              ...(error instanceof z.ZodError
+                ? {
+                    fields: error.issues.slice(0, 8).map((issue) => ({
+                      path: issue.path.join("."),
+                      code: issue.code,
+                    })),
+                  }
+                : {}),
             }),
           },
         ],
@@ -520,6 +567,7 @@ export async function connectTools(
   await Promise.all([server.connect(left), client.connect(right)]);
   return {
     specs,
+    getClarification: () => transferClarificationRequired,
     readOnlyTools: readOnlyTools as ReadonlySet<string>,
     client,
     async call(name: string, args: unknown) {

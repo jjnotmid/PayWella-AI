@@ -21,7 +21,7 @@ Node.js 24, TypeScript, React and PostgreSQL. Local development uses SQLite; hos
 - Automatic grouped receipts, recipient copies of internal payments, PNG/PDF receipts, PDF statements and saved bank recipients.
 - A responsive web companion with light, dark and device appearance settings.
 
-Provider adapters and offline contract tests are implemented. Real Meta/Gemini recognition quality, WhatsApp delivery, account eligibility and hosted operation must be tested with separate credentials before a connected demonstration is claimed.
+Provider adapters and offline contract tests are implemented. Model account access, speech/vision quality, WhatsApp delivery and hosted operation must be verified with this project’s separate credentials before a connected demonstration is claimed.
 
 ## Development
 
@@ -37,11 +37,21 @@ npm start
 
 The local forms and sandbox ledger work without an AI key. `npm run seed -- --organizer` enables organizer access for the isolated local test account. No script resets another environment or seeds a hosted database.
 
-Use an isolated Gemini key for temporary testing. When Meta access is activated, set `AI_PROVIDER=meta`, `MEDIA_PROVIDER=meta` and `MODEL_API_KEY`. The Meta adapters use Muse Spark for planning/vision and Muse Voice Transcribe for speech. The Docker runtime includes FFmpeg for the required WAV conversion. Neither provider is silently replaced by a scripted intent parser. API keys stay on the server.
+The planner supports `AI_PROVIDER=groq` with `GROQ_API_KEY` and `GROQ_MODEL=llama-3.3-70b-versatile`. Groq must actually grant that model to the account: its Llama 3.3 70B and Llama 3.1 8B models are currently enterprise-only. A valid API key alone does not establish access. Run `npm run check:model -- --exercise` to test account availability and a real model → MCP → private approval → sandbox execution journey with fictional data in a disposable in-memory store. The result is saved under ignored `private/`, without keys or raw customer content.
+
+The selected planner is Cloudflare-hosted Meta Llama 3.3 70B. Use `AI_PROVIDER=cloudflare`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_MODEL=@cf/meta/llama-3.3-70b-instruct-fp8-fast`. Run `npm run check:model -- --cloudflare --exercise`. Workers AI’s free allocation is quota limited; no automatic paid upgrade or hidden provider fallback is performed.
+
+The reasoning model is text-only. Images use `IMAGE_PROVIDER=cloudflare` and `CLOUDFLARE_VISION_MODEL=@cf/meta/llama-4-scout-17b-16e-instruct`. Meta vision extracts notebook/account candidates and interprets receipts, screenshots, documents and ordinary photos. A picture of a receipt never credits funds or proves a payment settled. Only reviewed ledger/account operations can change balances.
+
+Speech uses `MEDIA_PROVIDER=gemini` with `GEMINI_AUDIO_MODEL=gemini-3.5-transcribe`. When `INTRON_STT_ENABLED=true` and an Intron key is present, the bounded Gemini and Intron recognizers run together and the first valid verbatim transcript is used. Audio has no payment tools. Speech is not approval. The event runtime keeps its own database, app and WhatsApp credentials. Reusing the owner's speech API keys was explicitly authorized; those keys remain server-side and share their original provider quotas.
+
+Groq speech and vision adapters remain optional, explicitly selected alternatives. They are not the selected image or speech providers. The Meta contribution in the selected configuration is the Llama planner and Llama vision model.
+
+The optional Meta Model API adapters remain available with `AI_PROVIDER=meta`, `MEDIA_PROVIDER=meta` and `MODEL_API_KEY`. They use Muse Spark for planning/vision and Muse Voice Transcribe for speech. Gemini remains an explicitly selected testing adapter. The Docker runtime includes FFmpeg for bounded WAV conversion. No provider is silently replaced by a scripted parser. API keys stay on the server.
 
 `SAM_LEDGER_CROP=true` optionally isolates a notebook page through SAM 3.1 before a second vision pass. Zero/multiple matches or a failed crop retain the original candidate review; the interface never reports an image as segmented unless a crop was actually applied. Enable this only after testing the model access and representative notebook photos.
 
-Use a separate WhatsApp app, test number, webhook and database. Never point this service at another environment's data or callback.
+Use a separate WhatsApp app, test number, webhook and database. Never point this service at another environment's data or callback. PostgreSQL verifies the Supabase certificate with the public CA under `certs/`; certificate verification must remain enabled.
 
 ## Deployment and checks
 
@@ -54,11 +64,13 @@ npm run doctor -- --integration
 npm run doctor -- --submission
 ```
 
-The last two commands check configuration, not real provider success. Submission configuration requires the Meta planner and media adapter. Keep the repository private while preparing it, then ensure the submitted repository and video can actually be opened by judges.
+The last two commands check configuration, not real provider success or full submission eligibility. Submission configuration accepts a Meta Model API planner or a Meta generative model selected through Groq/Cloudflare, with separately configured speech and image adapters. Also run `check:model -- --exercise` for the selected provider, test the hosted WhatsApp journey, record the required video and verify public submission links. Prompt Guard is not a generative planner. Keep the repository private while preparing it, then ensure the submitted repository and video can actually be opened by judges.
 
 `npm run check:postgres` additionally tests concurrent approval, immutable and balanced journals, RLS, revisions and statements. It requires `PG_TEST_URL` pointing to a disposable loopback PostgreSQL server's `/postgres` database, creates a uniquely named test database, and drops only that database. GitHub CI supplies its own PostgreSQL service.
 
-Hosted organizer access is an operator action: after an account is opened, `npm run organizer -- --phone <country-code-and-number>` grants access only in the dedicated database marked as PayWella AI. This is test provisioning, not regulatory approval or a self-service permission bypass.
+Individuals can apply for organizer access with address evidence; registered businesses additionally provide CAC details and evidence. Evidence is encrypted and excluded from the model, workspace responses and public assets. A pending application does not enable organizer tools. An operator can inspect evidence locally using `npm run organizer:review -- --application <id> --inspect`, then use the same command with `--approve --reason <reason>` or `--reject --reason <reason>`. This is product access review, not completed bank KYC. Private inspection exports stay under ignored `private/organizer-reviews/`.
+
+Hosted test organizer access is also an operator action: after an account is opened, `npm run organizer -- --phone <country-code-and-number>` grants access only in the dedicated database marked as PayWella AI. This is test provisioning, not regulatory approval or a self-service permission bypass.
 
 ## Execution boundaries
 

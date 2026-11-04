@@ -7,6 +7,7 @@ import {
 import type { Core } from "../core.ts";
 import { AppError } from "../contracts.ts";
 import type { PreparationProgress } from "../contracts.ts";
+import type { Task } from "../contracts.ts";
 import { privateText, stamp } from "../security.ts";
 import { connectTools } from "./mcp.ts";
 import type { Model, ModelMessage } from "./model.ts";
@@ -15,6 +16,7 @@ const policy = [
   "Retain the unfinished instruction across clarification turns, including supplied account, amount, goal and bank, until completed or cancelled. A short answer fills the missing field; it is not an isolated request. Corrections replace that field. Ordinary questions can interrupt a request without authorizing it. Never import a completed old payment into a new one.",
   "Prepare all tasks in one prepare_plan call. Never silently omit a requested task. Read required goal, service and member references. Named savings use goal_create, which safely reuses a matching goal. Never ask which internal provider to use. For unsupported requests, explain the boundary and ask whether to proceed with supported tasks. No stocks, cards, crypto, loans or global-account tools exist here. Amounts are integer kobo. Never invent digits, prices, fees, identities, balances, returns or completion. Read a fresh balance before stating it.",
   "An active plan is context, not authorization. Use cancel_plan when the customer cancels that review. Use revise_plan for corrections before approval, retaining their other tasks. Get exact IDs from the current plan or tools. Never submit a second independent plan while an unapproved review is open. A bank account requires exactly ten actual supplied digits; never truncate or manufacture a digit. Distinguish a phone number from an account. Do not change member contribution terms unless explicitly supplied.",
+  "A bank and exact account number must come from the customer's actual messages, an explicitly selected owned beneficiary or the existing private review. Never guess a bank from digits or choose one from the catalogue on their behalf. BANK_CONFIRMATION_REQUIRED or ACCOUNT_CONFIRMATION_REQUIRED means stop preparing for this turn and ask specifically for that missing or invalid field. Keep every other requested task for the follow-up. Never work around that error by omitting the transfer or preparing only savings. Never cut an eleven-digit phone number into a ten-digit bank account.",
   "Never ask for or repeat a PIN, password, OTP, BVN, NIN or secret. No tool executes payments. Spoken yes never authorizes money. After preparation say the private review is ready, never payment success. Keep replies helpful and concise. No invented internet searches. Use first names sparingly. No em dashes.",
   "Use check_affordability for purchase-and-buffer arithmetic, using only a supplied or verified catalogue price. Never count separate savings or reserved payments as available cash. Use get_notification_status when a customer asks about a missing WhatsApp receipt; get the actual receipt or plan status before discussing payment completion. A missing message is never evidence that a payment should be sent again.",
   "Recurring savings use goal_schedule, with a supplied goal ID or exact goal name, per-run amount, daily/weekly cadence, start date from tomorrow and an explicit end date within a year. Do not invent a schedule or replace a one-time deposit with it. The schedule must be privately approved before future runs. Runs happen at 09:00 Africa/Lagos; insufficient-funds and offline missed runs are skipped, not caught up as surprise debits. Changes need a newly reviewed replacement using replacesId. Cancel only on explicit request.",
@@ -73,6 +75,7 @@ export class Agent {
       }
     }
     let activeSummary: unknown = null;
+    let reviewedTasks: Task[] = [];
     if (activePlan) {
       const p = await this.core.plan(owner, activePlan);
       if (
@@ -83,7 +86,8 @@ export class Agent {
         history = [];
         unfinished = [];
         activePlan = null;
-      } else
+      } else {
+        reviewedTasks = p.spec.map((task) => task.input);
         activeSummary = {
           id: p.id,
           revision: p.revision,
@@ -96,6 +100,7 @@ export class Agent {
           notice:
             "Owned current plan state. Private PIN approval is still required; this is not permission to execute.",
         };
+      }
     }
     let prepared: Awaited<ReturnType<Core["prepare"]>> | null = null;
     let membershipProposal: string | null = null;
@@ -119,6 +124,7 @@ export class Agent {
       (id) => {
         membershipProposal = id;
       },
+      { customerMessages: [...unfinished, clean], reviewedTasks },
     );
     const messages: ModelMessage[] = [
       { role: "system", content: policy },
@@ -243,6 +249,21 @@ export class Agent {
             messages.push(result.value);
           }
           position = end;
+        }
+        const missing = tools.getClarification();
+        if (missing) {
+          messages.push({
+            role: "system",
+            content:
+              missing === "BANK_CONFIRMATION_REQUIRED"
+                ? "No financial plan was prepared. Ask the customer which bank the supplied recipient account is with. Keep their supplied amount, account and every other requested task for the follow-up. Do not guess a bank or offer a partial review. Reply naturally in their language."
+                : "No financial plan was prepared. Ask the customer to confirm the complete ten-digit bank account number. Do not shorten a phone number or invent digits. Keep all other supplied task details for the follow-up. Reply naturally in their language.",
+          });
+          const answer = await this.model.complete(messages, []);
+          if (answer.calls.length || !answer.text.trim())
+            throw new AppError("AI_INVALID_RESPONSE", 503);
+          reply = answer.text;
+          break;
         }
         if (prepared || membershipProposal) break;
       }

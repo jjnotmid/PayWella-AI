@@ -37,6 +37,14 @@ test("production configuration rejects insecure approval links and invalid ident
     }).PUBLIC_ORIGIN,
     "https://paywella.example",
   );
+  assert.equal(
+    runtimeConfig({
+      APP_SECRET: "x".repeat(32),
+      NODE_ENV: "production",
+      RENDER_EXTERNAL_URL: "https://paywella-ai.example",
+    }).PUBLIC_ORIGIN,
+    "https://paywella-ai.example",
+  );
 });
 test("five-task review completes P2P, airtime, data, electricity and savings with a recipient receipt and electricity token", async () => {
   const db = await openStore({ file: ":memory:" }),

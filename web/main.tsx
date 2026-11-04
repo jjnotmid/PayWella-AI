@@ -32,6 +32,8 @@ import { ImportReview } from "./import-review.js";
 import { PlanEditor } from "./plan-editor.js";
 import { TaskProgress } from "./task-progress.js";
 import { AjoJoin, AgreementCheck, feeDescription } from "./ajo-join.js";
+import { OrganizerApplicationForm } from "./organizer-application.js";
+import { acceptPlanState } from "./plan-state.js";
 
 type Item = Record<string, any>;
 type Plan = Item & {
@@ -83,7 +85,7 @@ function App() {
     [error, setError] = useState(""),
     [workspace, setWorkspace] = useState<Item | null>(null),
     [page, setPage] = useState("home"),
-    [plan, setPlan] = useState<Plan | null>(null),
+    [plan, setPlanState] = useState<Plan | null>(null),
     [receipt, setReceipt] = useState<Item | null>(null),
     [receiptGroup, setReceiptGroup] = useState<Item[]>([]),
     [receiptIndex, setReceiptIndex] = useState(0),
@@ -102,6 +104,9 @@ function App() {
     [assistantProgress, setAssistantProgress] = useState<Item | null>(null);
   const lock = useRef(false),
     shownResult = useRef("");
+  function setPlan(value: Plan | null) {
+    setPlanState((current) => acceptPlanState(current, value));
+  }
   const showError = (e: unknown) =>
     setError(
       e instanceof Error
@@ -958,6 +963,59 @@ function App() {
                   </p>
                 </div>
               </section>
+              {!workspace.user.organizer && (
+                <section className="organizer-access">
+                  <div className="section-heading">
+                    <h2>Collect savings for your community?</h2>
+                  </div>
+                  {workspace.organizerApplications?.some(
+                    (application: Item) => application.status === "PENDING",
+                  ) ? (
+                    <>
+                      <p>
+                        <Clock3 size={18} /> Your organizer application is in
+                        review.
+                      </p>
+                      <small>
+                        You can still join a book and manage your own savings
+                        while you wait.
+                      </small>
+                    </>
+                  ) : (
+                    <>
+                      <p>
+                        Individuals and registered businesses can apply. Keep
+                        your members’ cash records, funded savings and payouts
+                        clear.
+                      </p>
+                      {workspace.organizerApplications?.find(
+                        (application: Item) =>
+                          application.status === "REJECTED",
+                      ) && (
+                        <p className="review-note">
+                          Your last application needs an update:{" "}
+                          {
+                            workspace.organizerApplications
+                              .filter(
+                                (application: Item) =>
+                                  application.status === "REJECTED",
+                              )
+                              .sort((a: Item, b: Item) =>
+                                b.createdAt.localeCompare(a.createdAt),
+                              )[0].reason
+                          }
+                        </p>
+                      )}
+                      <button
+                        className="text-button"
+                        onClick={() => setForm("organizer_application")}
+                      >
+                        Become an organizer <ArrowRight size={17} />
+                      </button>
+                    </>
+                  )}
+                </section>
+              )}
               <div className="section-heading">
                 <h2>Your collection books</h2>
                 <div className="inline-actions">
@@ -1093,28 +1151,29 @@ function App() {
                         Contribute
                       </button>
                     )}
-                    {!!workspace.user.organizer && (
-                      <>
-                        <button
-                          className="text-button"
-                          onClick={() => setForm("ajo_cash:" + m.id)}
-                        >
-                          Record cash
-                        </button>
-                        <button
-                          className="text-button"
-                          onClick={() => setForm("ajo_replace:" + m.id)}
-                        >
-                          Fund cash
-                        </button>
-                        <button
-                          className="text-button"
-                          onClick={() => setForm("ajo_payout:" + m.id)}
-                        >
-                          Payout
-                        </button>
-                      </>
-                    )}
+                    {!!workspace.user.organizer &&
+                      m.organizer === workspace.user.id && (
+                        <>
+                          <button
+                            className="text-button"
+                            onClick={() => setForm("ajo_cash:" + m.id)}
+                          >
+                            Record cash
+                          </button>
+                          <button
+                            className="text-button"
+                            onClick={() => setForm("ajo_replace:" + m.id)}
+                          >
+                            Fund cash
+                          </button>
+                          <button
+                            className="text-button"
+                            onClick={() => setForm("ajo_payout:" + m.id)}
+                          >
+                            Payout
+                          </button>
+                        </>
+                      )}
                   </div>
                 </section>
               ))}
@@ -1204,6 +1263,22 @@ function App() {
           </footer>
         </main>
       </div>
+      {form === "organizer_application" && workspace && (
+        <Modal
+          label="Organizer application"
+          close={() => {
+            if (!lock.current) setForm("");
+          }}
+        >
+          <OrganizerApplicationForm
+            submit={async (input) => {
+              await api("organizer/application", input);
+              await refresh();
+              setForm("");
+            }}
+          />
+        </Modal>
+      )}
       {form === "funding" && workspace && (
         <Modal label="Your account details" close={() => setForm("")}>
           <div className="funding-details">
@@ -1235,23 +1310,27 @@ function App() {
           />
         </Modal>
       )}
-      {form && form !== "funding" && form !== "ajo_join" && workspace && (
-        <TaskForm
-          type={form}
-          w={workspace}
-          close={() => setForm("")}
-          add={addTask}
-          save={async (path: string, data: unknown) => {
-            await guarded(async () => {
-              await api(path, data);
-              await refresh();
-              setForm("");
-            });
-          }}
-          busy={busy}
-          error={error}
-        />
-      )}
+      {form &&
+        form !== "funding" &&
+        form !== "ajo_join" &&
+        form !== "organizer_application" &&
+        workspace && (
+          <TaskForm
+            type={form}
+            w={workspace}
+            close={() => setForm("")}
+            add={addTask}
+            save={async (path: string, data: unknown) => {
+              await guarded(async () => {
+                await api(path, data);
+                await refresh();
+                setForm("");
+              });
+            }}
+            busy={busy}
+            error={error}
+          />
+        )}
       {receipt && (
         <Receipt
           key={receipt.id}

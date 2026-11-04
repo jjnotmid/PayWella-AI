@@ -17,6 +17,8 @@ jobs:
           --health-timeout 5s --health-retries 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -24,6 +26,7 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm test
+      - run: npm run check:public
       - run: npm run check:postgres
         env:
           PG_TEST_URL: postgres://postgres:local-ci-only@127.0.0.1:5432/postgres

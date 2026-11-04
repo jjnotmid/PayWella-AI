@@ -1,5 +1,11 @@
 export function runtimeConfig(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const env = { ...source };
+  env.PUBLIC_ORIGIN ||= env.RENDER_EXTERNAL_URL;
+  env.AI_PROVIDER ||= "cloudflare";
+  env.MEDIA_PROVIDER ||=
+    env.AI_PROVIDER === "cloudflare" ? "gemini" : env.AI_PROVIDER;
+  env.IMAGE_PROVIDER ||=
+    env.AI_PROVIDER === "cloudflare" ? "cloudflare" : env.MEDIA_PROVIDER;
   if ((env.APP_SECRET || "").length < 32)
     throw Error("Set APP_SECRET to a random value of at least 32 characters.");
   if (env.NODE_ENV === "production" && !env.PUBLIC_ORIGIN)
@@ -37,8 +43,18 @@ export function runtimeConfig(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
     throw Error(
       "WHATSAPP_GRAPH_VERSION must use the Graph API version format.",
     );
-  for (const key of ["AI_PROVIDER", "MEDIA_PROVIDER"])
-    if (env[key] && !["gemini", "meta"].includes(env[key]!))
-      throw Error(key + " must be gemini or meta.");
+  if (!["gemini", "meta", "groq", "cloudflare"].includes(env.AI_PROVIDER!))
+    throw Error("AI_PROVIDER must be cloudflare, groq, gemini or meta.");
+  if (!["gemini", "meta", "groq"].includes(env.MEDIA_PROVIDER!))
+    throw Error("MEDIA_PROVIDER must be groq, gemini or meta.");
+  if (!["cloudflare", "gemini", "meta", "groq"].includes(env.IMAGE_PROVIDER!))
+    throw Error("IMAGE_PROVIDER must be cloudflare, groq, gemini or meta.");
+  if (
+    env.CLOUDFLARE_ACCOUNT_ID &&
+    !/^[a-f0-9]{32}$/.test(env.CLOUDFLARE_ACCOUNT_ID)
+  )
+    throw Error(
+      "CLOUDFLARE_ACCOUNT_ID must be the 32-character account identifier.",
+    );
   return env;
 }
