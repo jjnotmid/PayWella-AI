@@ -11,7 +11,7 @@
     "start": "node --env-file-if-exists=.env.local src/main.ts",
     "check": "tsc --noEmit",
     "test": "node scripts/test.mjs",
-    "build": "npm run check && vite build",
+    "build": "npm run check && node scripts/collect-licenses.mjs && vite build",
     "seed": "node --env-file-if-exists=.env.local scripts/seed.ts",
     "doctor": "node --env-file-if-exists=.env.local scripts/doctor.ts",
     "check:model": "node --env-file-if-exists=.env.local scripts/check-model.ts",

@@ -6,6 +6,8 @@ The PayWella name and logo are excluded from any application source-code licence
 
 Interface icons are supplied by Lucide under the ISC licence. Their licence is included in the installed package.
 
+The web build includes the full React, React DOM, Scheduler and Lucide notices at [`web/public/licenses/frontend.txt`](web/public/licenses/frontend.txt), served as `/licenses/frontend.txt`. The build regenerates this file from the installed, locked dependency versions. Server dependencies retain their licence files in the deployed packages.
+
 Manrope is distributed under the SIL Open Font License. The font licence is included at `web/public/fonts/LICENSE.txt`.
 
 Noto Sans is used for currency glyph coverage. It is distributed under the SIL Open Font License, included at `web/public/fonts/LICENSE-NOTO.txt`.
