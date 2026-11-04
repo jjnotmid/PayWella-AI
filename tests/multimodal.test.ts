@@ -216,3 +216,121 @@ test("the configured speech recognizers start together; one provider rejection c
   assert.equal(value.kind, "audio");
   if (value.kind === "audio") assert.match(value.transcript, /0123456789/);
 });
+
+test("Gemini image wire schema uses an object and validates account candidates independently of irrelevant envelope fields", async () => {
+  const reader = createMediaReader(
+    {
+      IMAGE_PROVIDER: "gemini",
+      GEMINI_API_KEY: "image-fixture",
+      GEMINI_MEDIA_MODEL: "gemini-3.6-flash",
+    },
+    async (_url, init) => {
+      const body = JSON.parse(init!.body as string);
+      assert.equal(body.generationConfig.responseJsonSchema.type, "object");
+      assert.equal(body.generationConfig.responseJsonSchema.anyOf, undefined);
+      assert.equal(
+        body.generationConfig.thinkingConfig.thinkingLevel,
+        "minimal",
+      );
+      return Response.json({
+        candidates: [
+          {
+            content: {
+              parts: [
+                {
+                  text: JSON.stringify({
+                    kind: "account",
+                    accountNumber: "8000000001",
+                    bank: "OPay",
+                    name: null,
+                    amountKobo: null,
+                    unclear: false,
+                    description:
+                      "Extra envelope context is not a money instruction.",
+                  }),
+                },
+              ],
+            },
+          },
+        ],
+      });
+    },
+  );
+  const r = await reader.read(
+    validateMedia(Buffer.from([255, 216, 255, 0]), "image/jpeg"),
+  );
+  assert.equal(r.kind, "account");
+  if (r.kind === "account") assert.equal(r.accountNumber, "8000000001");
+});
+test("a busy Gemini vision model falls back once to the configured Gemini reasoning model", async () => {
+  const models: string[] = [];
+  const reader = createMediaReader(
+    {
+      IMAGE_PROVIDER: "gemini",
+      GEMINI_API_KEY: "image-fixture",
+      GEMINI_MEDIA_MODEL: "gemini-3.6-flash",
+      GEMINI_MODEL: "gemini-3.5-flash-lite",
+    },
+    async (url) => {
+      models.push(String(url));
+      if (String(url).includes("3.6-flash"))
+        return Response.json(
+          { error: { status: "UNAVAILABLE" } },
+          { status: 503 },
+        );
+      return Response.json({
+        candidates: [
+          {
+            content: {
+              parts: [
+                {
+                  text: JSON.stringify({
+                    kind: "account",
+                    accountNumber: "8000000001",
+                    bank: "OPay",
+                    name: null,
+                    amountKobo: null,
+                    unclear: false,
+                  }),
+                },
+              ],
+            },
+          },
+        ],
+      });
+    },
+  );
+  assert.equal(
+    (
+      await reader.read(
+        validateMedia(Buffer.from([255, 216, 255, 0]), "image/jpeg"),
+      )
+    ).kind,
+    "account",
+  );
+  assert.equal(models.length, 2);
+  assert.ok(models[1].includes("3.5-flash-lite"));
+});
+
+test("explicit Gemini image fallback terminates after two unavailable models", async () => {
+  let calls = 0;
+  const reader = createMediaReader(
+    {
+      IMAGE_PROVIDER: "gemini",
+      GEMINI_API_KEY: "fixture",
+      GEMINI_MODEL: "gemini-3.5-flash-lite",
+      GEMINI_MEDIA_MODEL: "gemini-3.5-flash-lite",
+      GEMINI_MEDIA_FALLBACK_MODEL: "gemini-3.6-flash",
+    },
+    async () => {
+      calls++;
+      return new Response("", { status: 503 });
+    },
+  );
+  await assert.rejects(
+    () =>
+      reader.read(validateMedia(Buffer.from([255, 216, 255, 0]), "image/jpeg")),
+    { code: "MEDIA_UNAVAILABLE" },
+  );
+  assert.equal(calls, 2);
+});

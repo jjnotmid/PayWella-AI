@@ -16,6 +16,7 @@ import { cancelSchedule } from "../savings-schedules.ts";
 import { errorCopy } from "../copy.ts";
 import { assertBankSources } from "./bank-grounding.ts";
 import type { BankContext } from "./bank-grounding.ts";
+import { productHelp, productTopics } from "./product-help.ts";
 const empty = z.object({}).strict();
 const readOnlyTools = new Set([
   "get_balance",
@@ -373,9 +374,15 @@ export async function connectTools(
     },
     {
       name: "get_product_help",
-      description: "Explain actual supported PayWella features and boundaries.",
-      schema: empty,
-      run: async () => ({
+      description:
+        "Read the actual PayWella product guide, supported steps and boundaries. Use for feature questions and troubleshooting rather than guessing or forcing a menu.",
+      schema: z
+        .object({
+          topic: z.enum(productTopics as [string, ...string[]]).optional(),
+        })
+        .strict(),
+      run: async (args: { topic?: keyof typeof productHelp }) => ({
+        guide: args.topic ? productHelp[args.topic] : productHelp,
         features: [
           "bank transfers",
           "PayWella transfers",

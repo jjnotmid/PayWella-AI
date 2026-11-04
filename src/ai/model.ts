@@ -211,7 +211,13 @@ export function createModel(
                   ],
                 }
               : {}),
-            generationConfig: { temperature: 0.15, maxOutputTokens: 1800 },
+            generationConfig: {
+              temperature: 0.15,
+              maxOutputTokens: 1800,
+              ...(/^gemini-3[.-]/.test(model)
+                ? { thinkingConfig: { thinkingLevel: "minimal" } }
+                : {}),
+            },
           }),
         },
       );

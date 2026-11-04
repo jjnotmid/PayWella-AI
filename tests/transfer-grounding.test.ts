@@ -141,3 +141,54 @@ test("a missing transfer field stops preparation retries and asks a model-genera
     await db.close();
   }
 });
+
+test("an explicitly supplied ten-digit mobile-wallet account is valid without inventing or dropping a digit", async () => {
+  const db = await openStore({ file: ":memory:" }),
+    core = new Core(db);
+  try {
+    const owner = await core.userForPhone("2348000000013");
+    await core.setup(owner, "Ada Example", "1234");
+    const task: Task = {
+      kind: "bank_transfer",
+      bankCode: "opay",
+      accountNumber: "8000000001",
+      amountKobo: 200000,
+    };
+    await assertBankSources(core, owner, [task], {
+      customerMessages: [
+        "Press my mama 2k. Her aza is 8000000001, bank na OP.",
+      ],
+      reviewedTasks: [],
+    });
+    const agent = new Agent(
+      core,
+      {
+        provider: "offline",
+        async complete(messages) {
+          const context = JSON.parse(messages[1].content);
+          assert.deepEqual(context.suppliedAccountCandidates, ["8000000001"]);
+          assert.equal(context.suppliedBankReferences[0].code, "opay");
+          return {
+            text: "",
+            calls: [
+              {
+                id: "prepare-wallet",
+                name: "prepare_plan",
+                arguments: { tasks: [task] },
+              },
+            ],
+          };
+        },
+      },
+      "isolated-mobile-wallet-context-secret",
+    );
+    const r = await agent.turn(
+      owner,
+      "Press my mama 2k. Her aza is 8000000001, bank na OP.",
+    );
+    assert.equal(r.prepared?.plan.spec.length, 1);
+    assert.equal((await core.workspace(owner)).balanceKobo, 50000000);
+  } finally {
+    await db.close();
+  }
+});

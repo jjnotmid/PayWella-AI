@@ -56,6 +56,50 @@ export const MediaResult = z.discriminatedUnion("kind", [
     .strict(),
 ]);
 export type MediaResult = z.infer<typeof MediaResult>;
+// Gemini receives a single object envelope; discriminated union validation stays server-side.
+const geminiMediaSchema = {
+  type: "object",
+  properties: {
+    kind: {
+      type: "string",
+      enum: ["account", "ledger", "image", "audio", "unreadable"],
+    },
+    accountNumber: { type: ["string", "null"] },
+    bank: { type: ["string", "null"] },
+    name: { type: ["string", "null"] },
+    amountKobo: { type: ["integer", "null"] },
+    unclear: { type: "boolean" },
+    category: {
+      type: "string",
+      enum: ["receipt", "screenshot", "document", "other"],
+    },
+    description: { type: "string" },
+    transcript: { type: "string" },
+    rows: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          name: { type: "string" },
+          amountKobo: { type: ["integer", "null"] },
+          date: { type: ["string", "null"] },
+          unclear: { type: "boolean" },
+        },
+        required: ["name", "amountKobo", "date", "unclear"],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ["kind"],
+  additionalProperties: false,
+};
+const mediaFields: Record<string, string[]> = {
+  account: ["kind", "accountNumber", "bank", "name", "amountKobo", "unclear"],
+  ledger: ["kind", "rows", "unclear"],
+  image: ["kind", "category", "description", "unclear"],
+  audio: ["kind", "transcript", "unclear"],
+  unreadable: ["kind"],
+};
 function parseMediaResult(value: unknown, media: Media): MediaResult {
   const parsed = MediaResult.safeParse(value);
   if (!parsed.success) throw new AppError("MEDIA_UNREADABLE");
@@ -218,7 +262,7 @@ export function createMediaReader(
             ).read(media, question, language),
         )
       : cloudflareImage;
-  return {
+  const reader: MediaReader = {
     async read(media, question = "", language = "en") {
       const provider =
         (media.mime.startsWith("image/") && env.IMAGE_PROVIDER) ||
@@ -395,8 +439,11 @@ export function createMediaReader(
             generationConfig: {
               temperature: 0,
               responseMimeType: "application/json",
-              responseJsonSchema: z.toJSONSchema(MediaResult),
+              responseJsonSchema: geminiMediaSchema,
               maxOutputTokens: 4000,
+              ...(/^gemini-3[.-]/.test(model)
+                ? { thinkingConfig: { thinkingLevel: "minimal" } }
+                : {}),
             },
           }),
         },
@@ -413,10 +460,55 @@ export function createMediaReader(
       if (typeof text !== "string" || text.length > 20000)
         throw new AppError("MEDIA_UNREADABLE");
       try {
-        return parseMediaResult(JSON.parse(text), media);
+        const value = JSON.parse(text);
+        if (!value || !mediaFields[value.kind])
+          throw new AppError("MEDIA_UNREADABLE");
+        return parseMediaResult(
+          Object.fromEntries(
+            Object.entries(value).filter(([field]) =>
+              mediaFields[value.kind].includes(field),
+            ),
+          ),
+          media,
+        );
       } catch {
         throw new AppError("MEDIA_UNREADABLE");
       }
     },
   };
+  const imageProvider =
+    env.IMAGE_PROVIDER || env.MEDIA_PROVIDER || env.AI_PROVIDER || "gemini";
+  const backupModel =
+    env.GEMINI_MEDIA_FALLBACK_MODEL ||
+    env.GEMINI_MODEL ||
+    "gemini-3.5-flash-lite";
+  if (
+    imageProvider === "gemini" &&
+    env.GEMINI_MEDIA_FALLBACK_DISABLED !== "true" &&
+    env.GEMINI_MEDIA_MODEL &&
+    env.GEMINI_MEDIA_MODEL !== backupModel
+  ) {
+    const backup = createMediaReader(
+      {
+        ...env,
+        GEMINI_MEDIA_MODEL: backupModel,
+        GEMINI_MEDIA_FALLBACK_DISABLED: "true",
+      },
+      fetcher,
+      convert,
+    );
+    const imageRead = providerFailover(
+      (media: Media, question: string, language: Language) =>
+        reader.read(media, question, language),
+      (media: Media, question: string, language: Language) =>
+        backup.read(media, question, language),
+    );
+    return {
+      read: (media, question = "", language = "en") =>
+        media.mime.startsWith("image/")
+          ? imageRead(media, question, language)
+          : reader.read(media, question, language),
+    };
+  }
+  return reader;
 }
