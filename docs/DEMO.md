@@ -4,9 +4,11 @@ I demonstrate the connected conversation and private approval journey, while kee
 
 ## Start here
 
-The [hosted web companion](https://paywella-ai.onrender.com) provides the WhatsApp shortcut. Full workspace and approval pages need a private account/session link. There is no shared public PIN and no judge backdoor.
+The [hosted web companion](https://paywella-ai.onrender.com) provides the WhatsApp shortcut. Full workspace and approval pages need a private account/session link. There is no public self-service test-account entry, shared public PIN or judge backdoor.
 
-Meta test-number restrictions may require a recipient to be approved before they can message the number. If that blocks remote review, use the local setup in [SETUP.md](SETUP.md) to inspect forms, approval, ledger and receipts with fictional data. Model requests still need the reviewer’s configured API access. A recording should show the connected route without implying unrestricted judge access.
+This deployment uses a restricted Meta test number: recipients must be approved before they can use it. An unapproved reviewer’s message may not reach the application. Making the source repository or website public does not remove that restriction. This access limitation is separate from the choice of reasoning model.
+
+For the connected WhatsApp journey, please refer to the video supplied with the submission. For independent hands-on review, use the local setup in [SETUP.md](SETUP.md) to create an isolated account, choose a PIN and inspect forms, approval, ledger and receipts with fictional data. Natural-language, voice and image requests still need the reviewer’s configured model credentials. No maintainer credentials or private customer session are needed for local reproduction.
 
 ## Walkthrough
 

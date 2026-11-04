@@ -6,6 +6,14 @@ I’m building PayWella AI for people who already coordinate money on WhatsApp: 
 
 [Open the web companion](https://paywella-ai.onrender.com) · [Set up locally](docs/SETUP.md) · [Architecture](docs/ARCHITECTURE.md) · [Demo walkthrough](docs/DEMO.md) · [Security](SECURITY.md)
 
+## Access for reviewers
+
+**The website is public, but the connected WhatsApp demo currently uses a restricted Meta test number.** Only approved recipient numbers can use that number. A message from an unapproved number may not reach this application, so opening the WhatsApp link does not guarantee access to the conversation.
+
+The web companion also requires a private account or approval session. It does not currently offer public self-service test accounts. Opening the landing page is not enough to enter an authenticated workspace, and I do not publish a shared account, PIN or session link.
+
+Please use the demo video supplied with the submission to inspect the connected WhatsApp journey, and [the walkthrough](docs/DEMO.md) to follow its steps. For independent hands-on review, [the local setup](docs/SETUP.md) creates an isolated account with fictional funds and a PIN you choose. Forms, approval, ledger and receipts can be tested without API keys; natural-language, image and voice requests require your own configured model access. This is a local reproduction route, not unrestricted access to the hosted WhatsApp number. All financial execution uses simulated funds.
+
 ## What you can do
 
 | Journey | Implementation |
