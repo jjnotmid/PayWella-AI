@@ -154,6 +154,24 @@ test("Groq has no silent model fallback, missing credentials make no request, an
     () => providerJson(new Response("x".repeat(200001))),
     (e: any) => e.code === "AI_RESPONSE_LIMIT",
   );
+  await assert.rejects(
+    () =>
+      providerJson(
+        Response.json(
+          {
+            errors: [
+              {
+                code: 4006,
+                message:
+                  "You have used up your daily free allocation of 10,000 neurons.",
+              },
+            ],
+          },
+          { status: 429 },
+        ),
+      ),
+    (e: any) => e.code === "AI_DAILY_QUOTA" && !e.message.includes("neurons"),
+  );
   assert.throws(() =>
     createModel({
       AI_PROVIDER: "groq",

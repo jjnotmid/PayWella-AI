@@ -109,6 +109,8 @@ export const errors: Record<string, string> = {
     "The assistant is not connected yet. You can still use the payment and savings forms.",
   AI_QUOTA:
     "The assistant has reached its provider limit. Please try again shortly. No new payment was authorized.",
+  AI_DAILY_QUOTA:
+    "The assistant’s daily allowance is used up. It resets at 1:00 a.m. Lagos time. You can still use the payment and savings forms. Your unfinished request is saved, and no new payment was authorized.",
   AI_UNAVAILABLE:
     "The assistant could not connect. Your unfinished request is saved. Please try again.",
   AI_NEEDS_RETRY:

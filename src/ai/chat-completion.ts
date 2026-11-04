@@ -3,20 +3,39 @@ import type { ModelMessage, ToolSpec } from "./model.ts";
 
 export async function providerJson(response: Response): Promise<any> {
   if (!response.ok) {
-    await response.body?.cancel();
+    let dailyQuota = false;
+    if (response.status === 429) {
+      try {
+        const failure = await boundedJson(response, 4096);
+        dailyQuota =
+          Array.isArray(failure.errors) &&
+          failure.errors.some(
+            (error: any) =>
+              error.code === 4006 &&
+              typeof error.message === "string" &&
+              error.message.includes("daily free allocation"),
+          );
+      } catch {}
+    } else await response.body?.cancel();
     throw new AppError(
-      response.status === 413
-        ? "AI_REQUEST_TOO_LARGE"
-        : response.status === 429
-          ? "AI_QUOTA"
-          : response.status === 401
-            ? "AI_KEY_REJECTED"
-            : response.status === 403 || response.status === 404
-              ? "AI_MODEL_UNAVAILABLE"
-              : "AI_UNAVAILABLE",
+      dailyQuota
+        ? "AI_DAILY_QUOTA"
+        : response.status === 413
+          ? "AI_REQUEST_TOO_LARGE"
+          : response.status === 429
+            ? "AI_QUOTA"
+            : response.status === 401
+              ? "AI_KEY_REJECTED"
+              : response.status === 403 || response.status === 404
+                ? "AI_MODEL_UNAVAILABLE"
+                : "AI_UNAVAILABLE",
       503,
     );
   }
+  return boundedJson(response, 200000);
+}
+
+async function boundedJson(response: Response, max: number): Promise<any> {
   if (!response.body) throw new AppError("AI_INVALID_RESPONSE", 503);
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -26,7 +45,7 @@ export async function providerJson(response: Response): Promise<any> {
       const { done, value } = await reader.read();
       if (done) break;
       size += value.length;
-      if (size > 200000) {
+      if (size > max) {
         await reader.cancel();
         throw new AppError("AI_RESPONSE_LIMIT", 503);
       }
