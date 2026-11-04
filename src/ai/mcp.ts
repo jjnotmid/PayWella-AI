@@ -324,7 +324,7 @@ export async function connectTools(
     {
       name: "set_language",
       description:
-        "Change the saved reply language only when the customer explicitly requests a preference change. Never infer consent for money from this. Supported: English, Pidgin, Yoruba, Igbo, Hausa.",
+        "Remember the language of a clearly spoken or written current message, or an explicit language request, so replies and private review buttons code-switch together. Do this before preparing a plan when the language changed. Keep the prior language for bare numbers and unclear fragments. Do not announce automatic switches. This never authorizes money. English en, Pidgin pcm, Yoruba yo, Igbo ig, Hausa ha.",
       schema: z
         .object({ language: z.enum(["en", "pcm", "yo", "ig", "ha"]) })
         .strict(),

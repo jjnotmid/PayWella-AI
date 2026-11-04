@@ -139,7 +139,18 @@ export async function readMainSpeech(
       ).then(transcript),
     );
   try {
-    return await Promise.any(jobs);
+    const settled = jobs.map((job) =>
+      job.then(
+        (value) => ({ value, error: null }),
+        (error) => ({ value: null, error }),
+      ),
+    );
+    // The automatic recognizer can follow a language switch. The regional backup needs a prior-language hint.
+    const primary = await settled[0];
+    if (primary.value) return primary.value;
+    const backup = settled.length > 1 ? await settled[1] : null;
+    if (backup?.value) return backup.value;
+    throw new AggregateError([primary.error, backup?.error].filter(Boolean));
   } catch (error) {
     const failures = error instanceof AggregateError ? error.errors : [error];
     throw (

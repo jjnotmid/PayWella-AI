@@ -2520,3 +2520,120 @@ input:disabled {
   padding: 16px 0 4px;
   color: var(--muted);
 }
+.theme-picker {
+  position: relative;
+  flex-shrink: 0;
+}
+.theme-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  min-height: 44px;
+  padding: 10px 13px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 13px;
+}
+.theme-menu {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 16;
+  width: 228px;
+  max-width: calc(100vw - 32px);
+  padding: 8px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 17px;
+  box-shadow: var(--shadow);
+}
+.theme-menu-title {
+  display: block;
+  padding: 10px 11px 8px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.theme-menu button {
+  display: flex;
+  gap: 11px;
+  align-items: center;
+  width: 100%;
+  min-height: 48px;
+  padding: 12px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--ink);
+  font-size: 14px;
+  text-align: left;
+}
+.theme-menu button[aria-checked="true"] {
+  background: var(--soft);
+  font-weight: 600;
+}
+.theme-menu button > svg:last-child:not(:first-child) {
+  margin-left: auto;
+  color: var(--gold);
+}
+.topbar {
+  position: relative;
+  z-index: 11;
+}
+.statement-dates {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+form label.statement-date-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 15px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  min-width: 0;
+}
+.statement-date-field > span {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.statement-date-field input {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  padding: 8px 0;
+  font-size: 16px;
+  min-height: 44px;
+}
+.statement-date-field input::-webkit-date-and-time-value {
+  text-align: left;
+}
+@media (max-width: 760px) {
+  .theme-trigger {
+    width: 44px;
+    height: 44px;
+    padding: 10px;
+  }
+  .theme-trigger > span {
+    display: none;
+  }
+  .statement-dates {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 14px;
+  }
+  .statement-download > div > p {
+    margin-top: 8px;
+    line-height: 1.6;
+  }
+}

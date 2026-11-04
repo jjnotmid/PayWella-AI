@@ -480,3 +480,93 @@ test("receipt upload failures retry before sending; a lost send acknowledgement 
     await db.close();
   }
 });
+
+test("automatic language changes reach the same-turn private review and switch back without discarding the open request", async () => {
+  const db = await openStore({ file: ":memory:" }),
+    core = new Core(db),
+    owner = await core.userForPhone("2348000000021");
+  try {
+    await core.setup(owner, "Ada Example", "1234");
+    let phase = 0;
+    const agent = new Agent(
+      core,
+      {
+        provider: "offline",
+        async complete() {
+          phase++;
+          if (phase === 1)
+            return {
+              text: "",
+              calls: [
+                {
+                  id: "language-pcm",
+                  name: "set_language",
+                  arguments: { language: "pcm" },
+                },
+                {
+                  id: "prepare-pcm",
+                  name: "prepare_plan",
+                  arguments: {
+                    tasks: [
+                      {
+                        kind: "bank_transfer",
+                        bankCode: "opay",
+                        accountNumber: "8000000001",
+                        amountKobo: 200000,
+                      },
+                    ],
+                  },
+                },
+              ],
+            };
+          if (phase === 2)
+            return {
+              text: "",
+              calls: [
+                {
+                  id: "language-en",
+                  name: "set_language",
+                  arguments: { language: "en" },
+                },
+              ],
+            };
+          return {
+            text: "You can review your transfer before approving it privately.",
+            calls: [],
+          };
+        },
+      },
+      secret,
+    );
+    const worker = new Worker(core, agent, env, async () =>
+      Response.json({ success: true }),
+    );
+    await core.enqueue(db, "wa:language-pcm", "agent", owner, {
+      sealed: agent.seal({
+        text: "Abeg press mama 2k, aza 8000000001, OP.",
+        channel: "whatsapp",
+      }),
+    });
+    await worker.turn();
+    const first = (await core.records(owner, "reply")).find(
+      (r) => r.id === "wa:language-pcm",
+    );
+    assert.match(
+      agent.open(first!.sealed).text,
+      new RegExp(whatsappCopy("pcm").ready),
+    );
+    assert.equal((await core.getUser(owner)).language, "pcm");
+    await core.enqueue(db, "wa:language-en", "agent", owner, {
+      sealed: agent.seal({
+        text: "Please explain what I need to do next in English.",
+        channel: "whatsapp",
+      }),
+    });
+    await worker.turn();
+    assert.equal((await core.getUser(owner)).language, "en");
+    assert.equal((await core.workspace(owner)).plans[0].status, "READY");
+    assert.equal((await core.workspace(owner)).balanceKobo, 50000000);
+  } finally {
+    await db.close();
+  }
+});

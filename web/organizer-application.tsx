@@ -78,13 +78,24 @@ async function evidence(file: File) {
     !["application/pdf", "image/jpeg", "image/png"].includes(file.type)
   )
     throw Error("Choose a PDF, JPEG or PNG file smaller than 1 MB.");
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
+  const base64 = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const value = reader.result;
+      if (typeof value !== "string" || !value.includes(","))
+        return reject(
+          new Error("That file could not be read. Please choose it again."),
+        );
+      resolve(value.slice(value.indexOf(",") + 1));
+    };
+    reader.onerror = () =>
+      reject(new Error("That file could not be read. Please choose it again."));
+    reader.readAsDataURL(file);
+  });
   return {
     name: file.name.slice(0, 100),
     mime: file.type,
-    base64: btoa(binary),
+    base64,
   };
 }
 

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useId, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   ArrowUpRight,
@@ -26,6 +26,8 @@ import {
   Moon,
   Trash2,
   Settings,
+  Monitor,
+  CalendarDays,
 } from "lucide-react";
 import "./style.css";
 import { ImportReview } from "./import-review.js";
@@ -49,16 +51,37 @@ const money = (kobo: number) =>
     currency: "NGN",
     maximumFractionDigits: 2,
   }).format(kobo / 100);
-const initialTheme = () => localStorage.getItem("pw-theme") || "system";
+const initialTheme = () => {
+  const saved = localStorage.getItem("pw-theme");
+  return saved && ["system", "light", "dark"].includes(saved)
+    ? saved
+    : "system";
+};
 async function api(path: string, body?: unknown) {
-  const response = await fetch("/api/" + path, {
+  let response: Response;
+  try {
+    response = await fetch("/api/" + path, {
       method: body ? "POST" : "GET",
       headers: body ? { "content-type": "application/json" } : {},
       ...(body ? { body: JSON.stringify(body) } : {}),
       credentials: "same-origin",
-      signal: AbortSignal.timeout(15000),
-    }),
-    value = await response.json();
+      signal: AbortSignal.timeout(
+        path === "organizer/application" ? 90000 : 30000,
+      ),
+    });
+  } catch {
+    throw Object.assign(
+      new Error(
+        path === "organizer/application"
+          ? "We could not confirm the upload. Your selected files are still here. Check your application status before trying again."
+          : body
+            ? "We could not confirm that request. Check its status before trying again."
+            : "The connection was interrupted. Please try again.",
+      ),
+      { code: "REQUEST_UNCONFIRMED", status: 0 },
+    );
+  }
+  const value = await response.json();
   if (!response.ok)
     throw Object.assign(
       new Error(
@@ -1288,9 +1311,24 @@ function App() {
         >
           <OrganizerApplicationForm
             submit={async (input) => {
-              await api("organizer/application", input);
-              await refresh();
+              try {
+                await api("organizer/application", input);
+              } catch (error) {
+                const current = await refresh().catch(() => null);
+                if (
+                  !current?.user.organizer &&
+                  !current?.organizerApplications.some(
+                    (application: Item) => application.status === "PENDING",
+                  )
+                )
+                  throw error;
+              }
               setForm("");
+              await refresh().catch(() =>
+                setError(
+                  "Your application was received. Refresh Ajo to see its status.",
+                ),
+              );
             }}
           />
         </Modal>
@@ -1427,20 +1465,100 @@ function Theme({
   value: string;
   change: (v: string) => void;
 }) {
+  const [open, setOpen] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const id = useId();
+  const choices = [
+    { id: "system", label: "Use device setting", Icon: Monitor },
+    { id: "light", label: "Light", Icon: Sun },
+    { id: "dark", label: "Dark", Icon: Moon },
+  ];
+  const Current =
+    choices.find((choice) => choice.id === value)?.Icon || Monitor;
+  useEffect(() => {
+    if (!open) return;
+    root.current
+      ?.querySelector<HTMLButtonElement>('[aria-checked="true"]')
+      ?.focus();
+    const outside = (event: PointerEvent) => {
+      if (!root.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", outside);
+    return () => document.removeEventListener("pointerdown", outside);
+  }, [open]);
   return (
-    <label className="theme-control">
-      <Sun size={16} />
-      <span className="sr-only">Appearance</span>
-      <select
-        aria-label="Appearance"
-        value={value}
-        onChange={(e) => change(e.target.value)}
+    <div className="theme-picker" ref={root}>
+      <button
+        className="theme-trigger"
+        ref={trigger}
+        type="button"
+        aria-label="Change appearance"
+        aria-expanded={open}
+        aria-controls={id}
+        aria-haspopup="menu"
+        onClick={() => setOpen(!open)}
       >
-        <option value="system">Device</option>
-        <option value="light">Light</option>
-        <option value="dark">Dark</option>
-      </select>
-    </label>
+        <Current size={20} />
+        <span>Appearance</span>
+      </button>
+      {open && (
+        <div
+          className="theme-menu"
+          id={id}
+          role="menu"
+          aria-label="Appearance"
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              setOpen(false);
+              trigger.current?.focus();
+              return;
+            }
+            if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
+              event.preventDefault();
+              const buttons = [
+                ...event.currentTarget.querySelectorAll<HTMLButtonElement>(
+                  "button",
+                ),
+              ];
+              const index = buttons.indexOf(
+                document.activeElement as HTMLButtonElement,
+              );
+              const next =
+                event.key === "Home"
+                  ? 0
+                  : event.key === "End"
+                    ? buttons.length - 1
+                    : (index +
+                        (event.key === "ArrowDown" ? 1 : -1) +
+                        buttons.length) %
+                      buttons.length;
+              buttons[next]?.focus();
+            }
+            if (event.key === "Tab") setOpen(false);
+          }}
+        >
+          <span className="theme-menu-title">Appearance</span>
+          {choices.map((choice) => (
+            <button
+              key={choice.id}
+              type="button"
+              role="menuitemradio"
+              aria-checked={value === choice.id}
+              onClick={() => {
+                change(choice.id);
+                setOpen(false);
+                trigger.current?.focus();
+              }}
+            >
+              <choice.Icon size={19} />
+              <span>{choice.label}</span>
+              {value === choice.id && <Check size={18} />}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 function StatementDownload() {
@@ -1490,9 +1608,12 @@ function StatementDownload() {
         <h2>Your account statement</h2>
         <p>Posted transactions, opening balance and closing balance.</p>
       </div>
-      <div className="field-row">
-        <label>
-          From
+      <div className="statement-dates">
+        <label className="statement-date-field">
+          <span>
+            <CalendarDays size={17} />
+            From
+          </span>
           <input
             type="date"
             value={start}
@@ -1502,8 +1623,11 @@ function StatementDownload() {
             onChange={(event) => setStart(event.target.value)}
           />
         </label>
-        <label>
-          To
+        <label className="statement-date-field">
+          <span>
+            <CalendarDays size={17} />
+            To
+          </span>
           <input
             type="date"
             value={end}

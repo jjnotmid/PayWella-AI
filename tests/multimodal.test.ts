@@ -334,3 +334,45 @@ test("explicit Gemini image fallback terminates after two unavailable models", a
   );
   assert.equal(calls, 2);
 });
+
+test("automatic speech recognition takes precedence over a fast backup forced to the previous language", async () => {
+  const reader = createMediaReader(
+    {
+      MEDIA_PROVIDER: "gemini",
+      GEMINI_API_KEY: "fixture",
+      GEMINI_AUDIO_MODEL: "gemini-3.5-transcribe",
+      INTRON_STT_ENABLED: "true",
+      INTRON_API_KEY: "fixture",
+    },
+    async (url) => {
+      if (String(url).includes("intron.io"))
+        return Response.json({
+          data: { audio_transcript: "previous-language-decoding" },
+        });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return Response.json({
+        candidates: [
+          {
+            finishReason: "STOP",
+            content: {
+              parts: [
+                {
+                  audioTranscription: { text: "Please reply in English now." },
+                },
+              ],
+            },
+          },
+        ],
+      });
+    },
+    async () => Buffer.from("RIFFisolated-wave"),
+  );
+  const r = await reader.read(
+    validateMedia(Buffer.from("OggSfixture"), "audio/ogg"),
+    "",
+    "yo",
+  );
+  assert.equal(r.kind, "audio");
+  if (r.kind === "audio")
+    assert.equal(r.transcript, "Please reply in English now.");
+});

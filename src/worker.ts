@@ -117,8 +117,8 @@ export class Worker {
           ],
         );
       };
-      const input = this.agent.open(job.payload.sealed),
-        user = await this.core.getUser(job.owner);
+      const input = this.agent.open(job.payload.sealed);
+      let user = await this.core.getUser(job.owner);
       let ledgerReply: any = null;
       if (input.media && user.ready) {
         await progress({
@@ -395,6 +395,7 @@ export class Worker {
             job.id,
             progress,
           );
+        user = await this.core.getUser(job.owner);
         if (reply.membershipProposal) {
           const capability = await createCapability(
             this.core.db,
