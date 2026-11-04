@@ -98,7 +98,7 @@ try {
   await core.drain();
   const statement = await core.statement(owner, "2020-01-01", "2020-12-31");
   assert.equal(statement.entries.length, 0);
-  const today = new Date().toISOString().slice(0, 10),
+  const today = lagosDate(),
     current = await core.statement(owner, today.slice(0, 4) + "-01-01", today);
   assert.equal(current.closingKobo, 49250000);
   await db.query("UPDATE users SET organizer=1 WHERE id=$1", [owner]);

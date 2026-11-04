@@ -1,5 +1,6 @@
 import React, { useEffect, useId, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { lagosDate } from "../src/calendar.ts";
 import {
   ArrowUpRight,
   ArrowDownLeft,
@@ -1562,7 +1563,7 @@ function Theme({
   );
 }
 function StatementDownload() {
-  const today = new Date().toISOString().slice(0, 10),
+  const today = lagosDate(),
     [start, setStart] = useState(today.slice(0, 8) + "01"),
     [end, setEnd] = useState(today),
     [busy, setBusy] = useState(false),
@@ -2411,9 +2412,7 @@ function TaskForm({ type, w, close, add, save, busy, error }: any) {
             <input
               name="startDate"
               type="date"
-              defaultValue={new Date(Date.now() + 3600000)
-                .toISOString()
-                .slice(0, 10)}
+              defaultValue={lagosDate()}
               required
             />
           </label>
@@ -2421,12 +2420,7 @@ function TaskForm({ type, w, close, add, save, busy, error }: any) {
         {(kind === "ajo_join" || kind === "ajo_member") && (
           <label>
             Agreed payout date
-            <input
-              name="maturityDate"
-              type="date"
-              min={new Date().toISOString().slice(0, 10)}
-              required
-            />
+            <input name="maturityDate" type="date" min={lagosDate()} required />
           </label>
         )}
         {kind === "goal_schedule" && (
@@ -2450,10 +2444,8 @@ function TaskForm({ type, w, close, add, save, busy, error }: any) {
               <input
                 name="startDate"
                 type="date"
-                min={new Date(Date.now() + 90000000).toISOString().slice(0, 10)}
-                defaultValue={new Date(Date.now() + 90000000)
-                  .toISOString()
-                  .slice(0, 10)}
+                min={lagosDate(Date.now() + 86400000)}
+                defaultValue={lagosDate(Date.now() + 86400000)}
                 required
               />
             </label>
@@ -2462,10 +2454,8 @@ function TaskForm({ type, w, close, add, save, busy, error }: any) {
               <input
                 name="endDate"
                 type="date"
-                min={new Date(Date.now() + 90000000).toISOString().slice(0, 10)}
-                defaultValue={new Date(Date.now() + 30 * 86400000 + 3600000)
-                  .toISOString()
-                  .slice(0, 10)}
+                min={lagosDate(Date.now() + 86400000)}
+                defaultValue={lagosDate(Date.now() + 30 * 86400000)}
                 required
               />
             </label>
@@ -2482,8 +2472,8 @@ function TaskForm({ type, w, close, add, save, busy, error }: any) {
             <input
               name="date"
               type="date"
-              max={new Date().toISOString().slice(0, 10)}
-              defaultValue={new Date().toISOString().slice(0, 10)}
+              max={lagosDate()}
+              defaultValue={lagosDate()}
               required
             />
           </label>

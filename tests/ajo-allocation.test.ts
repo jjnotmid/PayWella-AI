@@ -34,6 +34,9 @@ test("catch-up contributions cover oldest unpaid dates, complete partial days an
   );
   assert.throws(() => allocateContribution(terms, -1, 1));
   assert.equal(lagosDate(Date.parse("2026-10-28T23:30:00Z")), "2026-10-29");
+  assert.equal(lagosDate(Date.parse("2026-11-04T22:59:59Z")), "2026-11-04");
+  assert.equal(lagosDate(Date.parse("2026-11-04T23:00:00Z")), "2026-11-05");
+  assert.equal(lagosDate(Date.parse("2026-12-31T23:30:00Z")), "2027-01-01");
 });
 
 async function fixture() {

@@ -42,7 +42,7 @@ At commit `8c93a3e`, the application passed 84 offline tests, the build, CI’s 
 
 CI’s current result is available in the repository’s Actions tab. Re-run model and handset checks after any provider/configuration change.
 
-## Remaining submission gates
+## Final submission checks
 
 - Exercise Meta reasoning and image inference with the intended submission credentials and sufficient quota. The last verified hosted profile used Gemini.
 - Confirm a complete hosted WhatsApp voice-note → private review → PIN → web/WhatsApp receipt journey under that final profile.

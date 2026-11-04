@@ -1,9 +1,7 @@
 import { AppError } from "./contracts.ts";
 
 const dayMs = 86400000;
-export function lagosDate(at = Date.now()) {
-  return new Date(at + 3600000).toISOString().slice(0, 10);
-}
+export { lagosDate } from "./calendar.ts";
 function day(value: string) {
   const n = Date.parse(value + "T00:00:00Z");
   if (

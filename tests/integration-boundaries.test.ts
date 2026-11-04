@@ -8,8 +8,8 @@ import { SandboxRail } from "../src/providers/sandbox.ts";
 import { statementPdf } from "../src/statements.ts";
 import { Agent } from "../src/ai/agent.ts";
 import { Worker } from "../src/worker.ts";
-import { stamp } from "../src/security.ts";
 import { runtimeConfig } from "../src/config.ts";
+import { lagosDate } from "../src/calendar.ts";
 test("production configuration rejects insecure approval links and invalid identifiers without revealing key values", () => {
   assert.throws(() =>
     runtimeConfig({
@@ -234,7 +234,11 @@ test("Meta media adapters send private inline images and a converted WAV without
   assert.equal(converted, 1);
   assert.equal(speech.kind, "audio");
 });
-test("a rejected payment releases only its hold while other tasks settle and appear in the statement", async () => {
+test("a rejected payment releases only its hold while settled tasks appear in the current Lagos-day statement", async (t) => {
+  t.mock.timers.enable({
+    apis: ["Date"],
+    now: new Date("2026-11-04T23:30:00Z"),
+  });
   const db = await openStore({ file: ":memory:" }),
     rail = new SandboxRail(),
     core = new Core(db, rail);
@@ -262,12 +266,13 @@ test("a rejected payment releases only its hold while other tasks settle and app
     assert.equal(plan.status, "PARTIAL");
     assert.equal((await core.workspace(owner)).availableKobo, 49700000);
     assert.equal((await core.workspace(owner)).receipts.length, 1);
-    const today = stamp().slice(0, 10),
+    const today = lagosDate(),
       statement = await core.statement(
         owner,
         today.slice(0, 4) + "-01-01",
         today,
       );
+    assert.equal(today, "2026-11-05");
     assert.equal(statement.closingKobo, 49700000);
     assert.equal(statement.entries.length, 2);
     assert.equal(
