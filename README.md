@@ -48,6 +48,8 @@ I use the MCP SDK for tool discovery and invocation inside the server. The agent
 
 ## Models and runtime
 
+**Built with Llama in the Meta configuration.** Meta model terms and attribution are recorded in [NOTICE.md](NOTICE.md); they are separate from the licence for my application code.
+
 | Layer | Meta configuration | Testing configuration |
 | --- | --- | --- |
 | Reasoning and MCP planning | Meta Llama 3.3 70B on Cloudflare Workers AI | Gemini adapter |
@@ -102,3 +104,7 @@ See [the demo guide](docs/DEMO.md) for connected-model checks, a repeatable walk
 This repository contains WhatsApp messaging and the web companion. Financial rails and service catalogues are simulated; it does not move real bank money or establish a banking partnership. Native mobile, live WhatsApp calls, crypto, cards, foreign accounts, lending and yield products are outside this release. Public ChatGPT/Claude MCP access is also outside this release.
 
 My event contribution map is in [CONTRIBUTIONS.md](docs/CONTRIBUTIONS.md). Assets and third-party licences are recorded in [ASSETS.md](ASSETS.md). Commit dates remain intact. Internal product, company, registration and fundraising documents are excluded from this repository.
+
+## Licence
+
+I release the original application source code in this repository under the [MIT License](LICENSE). The PayWella name and logo are excluded from that grant; third-party libraries, fonts and model services retain their respective terms. See [ASSETS.md](ASSETS.md).
