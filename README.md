@@ -57,7 +57,13 @@ I use the MCP SDK for tool discovery and invocation inside the server. The agent
 | Voice-note transcription | Gemini dedicated transcription; optional Intron backup | Same speech adapters |
 | Application | Node.js 24, TypeScript, React, PostgreSQL on Supabase, Docker on Render | SQLite for local development |
 
-The hosted build was last verified using the Gemini testing profile. The Meta profile is implemented, but the final submission must be exercised with Meta inference active. A configured model name or a passing offline test is not evidence that a live model call succeeded. Optional adapters are documented in [Setup](docs/SETUP.md).
+The hosted build was last verified using the Gemini testing profile. The Meta profile is implemented, but a complete final Meta-powered execution was not verified before submission. A configured model name or a passing offline test is not evidence that a live model call succeeded. Optional adapters are documented in [Setup](docs/SETUP.md).
+
+### Model-access constraints
+
+I am an independent developer and a student at the University of Lagos, building with a limited personal budget. I could not activate direct Meta Model API access because my card was not accepted during account verification. I also attempted Cloudflare-hosted Llama inference, but its API continued returning a daily-quota error after the documented reset while the same account's dashboard showed 0/10,000 Neurons used. A newly created active token did not resolve it.
+
+I checked additional providers, but the available paid or enterprise routes were beyond my budget before the deadline. I kept Gemini active for testing rather than presenting an unavailable provider as working. [My model-access note](docs/MODEL_ACCESS.md) records what I tried, the limited connected Llama checks that succeeded, and what remains unverified.
 
 ## Run locally
 

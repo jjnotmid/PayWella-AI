@@ -44,6 +44,8 @@ At commit `8c93a3e`, the application passed 84 offline tests, the build, CI’s 
 
 CI’s current result is available in the repository’s Actions tab. Re-run model and handset checks after any provider/configuration change.
 
+The card-verification difficulty, Cloudflare quota mismatch and my budget constraints are documented in [Model access and development constraints](MODEL_ACCESS.md). The active hosted testing profile remains distinct from the implemented Meta integrations.
+
 ## Final submission checks
 
 - Exercise Meta reasoning and image inference with the intended submission credentials and sufficient quota. The last verified hosted profile used Gemini.
