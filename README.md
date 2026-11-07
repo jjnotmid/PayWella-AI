@@ -1,10 +1,12 @@
 # PayWella AI
 
+> **Hosting notice · 7 November 2026:** Render suspended the demo after its free workspace bandwidth was exhausted. The recovered deployment is [paywella-ai.vercel.app](https://paywella-ai.vercel.app). Application code on this branch remains the submitted version; subsequent hosting and queue-efficiency repairs are dated separately on [`fix/request-driven-hosting`](https://github.com/jjnotmid/PayWella-AI/tree/fix/request-driven-hosting). [Recovery details](https://github.com/jjnotmid/PayWella-AI/blob/fix/request-driven-hosting/docs/HOSTING_RECOVERY.md). These later repairs are not claimed as work completed during the event; the organizers determine whether the recovered host may be used for judging.
+
 **An MCP-powered financial agent for payments, savings and Ajo, through WhatsApp text, voice notes and photos.**
 
 I’m building PayWella AI for people who already coordinate money on WhatsApp: Ajo organizers keeping paper records, members tracking contributions, and everyday users paying bills or supporting family. One conversation can become several tasks, with one private review and transaction PIN before execution.
 
-[Open the web companion](https://paywella-ai.onrender.com) · [Set up locally](docs/SETUP.md) · [Architecture](docs/ARCHITECTURE.md) · [Demo walkthrough](docs/DEMO.md) · [Security](SECURITY.md)
+[Open the recovered web companion](https://paywella-ai.vercel.app) · [Set up locally](docs/SETUP.md) · [Architecture](docs/ARCHITECTURE.md) · [Demo walkthrough](docs/DEMO.md) · [Security](SECURITY.md)
 
 ## Access for reviewers
 
