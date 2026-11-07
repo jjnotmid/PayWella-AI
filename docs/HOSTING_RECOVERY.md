@@ -1,6 +1,6 @@
 # Hosting recovery
 
-I prepared this operational fix on November 7, 2026 after Render suspended the workspace for exhausting its shared outbound-bandwidth allowance. The submitted application is still available at commit `b9403fa`; recovery work lives on `fix/request-driven-hosting`. This document does not change the hackathon contribution dates or claim the recovery work was built before submission.
+I prepared this operational fix on November 7, 2026 after Render suspended the workspace for exhausting its shared outbound-bandwidth allowance. The previous deployed application came from commit `dd9c861`; the repository's `main` branch remains at documentation commit `b9403fa`. Recovery work lives on `fix/request-driven-hosting`. This document does not change the hackathon contribution dates or claim the recovery work was built before submission. Only the organizers can determine whether a post-submission hosting repair is permitted.
 
 ## Why the original deployment consumed bandwidth
 
