@@ -13,6 +13,18 @@
   },
   "headers": [
     {
+      "source": "/",
+      "headers": [{ "key": "Cache-Control", "value": "no-store" }]
+    },
+    {
+      "source": "/open",
+      "headers": [{ "key": "Cache-Control", "value": "no-store" }]
+    },
+    {
+      "source": "/fonts/(.*)",
+      "headers": [{ "key": "Cache-Control", "value": "public, max-age=86400" }]
+    },
+    {
       "source": "/assets/(.*)",
       "headers": [
         {

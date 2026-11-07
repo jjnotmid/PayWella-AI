@@ -1,6 +1,8 @@
 # Hosting recovery
 
-I prepared this operational fix on November 7, 2026 after Render suspended the workspace for exhausting its shared outbound-bandwidth allowance. The previous deployed application came from commit `dd9c861`; the repository's `main` branch remains at documentation commit `b9403fa`. Recovery work lives on `fix/request-driven-hosting`. This document does not change the hackathon contribution dates or claim the recovery work was built before submission. Only the organizers can determine whether a post-submission hosting repair is permitted.
+I prepared this operational fix on November 7, 2026 after Render suspended the workspace for exhausting its shared outbound-bandwidth allowance. The previous deployed application came from commit `dd9c861`; the application code on `main` remains as it was at documentation commit `b9403fa`. A dated README notice points reviewers to the recovered deployment. Recovery code lives on `fix/request-driven-hosting`. This document does not change the hackathon contribution dates or claim the recovery work was built before submission. Only the organizers can determine whether a post-submission hosting repair is permitted.
+
+The recovered deployment is [paywella-ai.vercel.app](https://paywella-ai.vercel.app). Its financial feature set is unchanged. The original video and commit history remain available for assessment.
 
 ## Why the original deployment consumed bandwidth
 
