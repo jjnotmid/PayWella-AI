@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import ffmpeg from "ffmpeg-static";
 import { createHash } from "node:crypto";
 import { AppError } from "../contracts.ts";
 import type { Media } from "./media.ts";
@@ -113,7 +114,7 @@ export async function locateLedgerPage(
 export function cropLedgerPage(media: Media, box: PageBox): Promise<Media> {
   return new Promise((resolve, reject) => {
     const child = spawn(
-        "ffmpeg",
+        typeof ffmpeg === "string" ? ffmpeg : "ffmpeg",
         [
           "-nostdin",
           "-v",

@@ -39,6 +39,15 @@ export async function openStore({
   file = ".data/paywella.sqlite",
   production = false,
   ca = "",
+  initialize = true,
+  preparePool,
+}: {
+  url?: string;
+  file?: string;
+  production?: boolean;
+  ca?: string;
+  initialize?: boolean;
+  preparePool?: (pool: pg.Pool) => void;
 } = {}): Promise<Store> {
   if (production && !url)
     throw new Error("Production requires a separate PostgreSQL database");
@@ -58,7 +67,9 @@ export async function openStore({
             }
           : undefined,
       connectionTimeoutMillis: 5000,
+      idleTimeoutMillis: 15000,
     });
+    preparePool?.(pool);
     const wrap = (client: pg.Pool | pg.PoolClient): Query => ({
       async query(sql, args = []) {
         const r = await client.query(sql, args);
@@ -66,64 +77,81 @@ export async function openStore({
       },
     });
     const query = wrap(pool);
-    const init = await pool.connect();
-    let initialized = false;
-    try {
-      await init.query("BEGIN");
-      await init.query(
-        "SELECT pg_advisory_xact_lock(hashtext('paywella-ai-schema'))",
-      );
-      const tables = (
+    if (initialize) {
+      const init = await pool.connect();
+      let initialized = false;
+      try {
+        await init.query("BEGIN");
         await init.query(
-          "SELECT tablename FROM pg_tables WHERE schemaname='public'",
-        )
-      ).rows;
-      if (tables.length) {
-        if (!tables.some((row) => row.tablename === "paywella_ai_identity"))
-          throw new Error(
-            "Use a separate empty database for PayWella AI. No schema changes were made.",
-          );
-        const identity = (
+          "SELECT pg_advisory_xact_lock(hashtext('paywella-ai-schema'))",
+        );
+        const tables = (
           await init.query(
+            "SELECT tablename FROM pg_tables WHERE schemaname='public'",
+          )
+        ).rows;
+        if (tables.length) {
+          if (!tables.some((row) => row.tablename === "paywella_ai_identity"))
+            throw new Error(
+              "Use a separate empty database for PayWella AI. No schema changes were made.",
+            );
+          const identity = (
+            await init.query(
+              "SELECT value FROM public.paywella_ai_identity WHERE id='application'",
+            )
+          ).rows[0];
+          if (identity?.value !== "paywella-ai-v1")
+            throw new Error(
+              "This database belongs to a different application.",
+            );
+        }
+        await init.query(schema);
+        const ownTables = [
+          ...schema.matchAll(/CREATE TABLE IF NOT EXISTS (\w+)/g),
+        ].map((match) => match[1]);
+        for (const table of ownTables) {
+          await init.query(`ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY`);
+          await init.query(`REVOKE ALL ON TABLE ${table} FROM PUBLIC`);
+          for (const role of ["anon", "authenticated"])
+            await init.query(
+              `DO $$ BEGIN IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='${role}') THEN REVOKE ALL ON TABLE ${table} FROM ${role}; END IF; END $$`,
+            );
+        }
+        await init.query(
+          `CREATE OR REPLACE FUNCTION deny_ledger_change() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'Append-only ledger'; END $$`,
+        );
+        await init.query(
+          `CREATE OR REPLACE FUNCTION verify_journal_balance() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF (SELECT COALESCE(SUM(amount),0) FROM postings WHERE journal=NEW.journal)<>0 THEN RAISE EXCEPTION 'Unbalanced journal'; END IF; RETURN NULL; END $$`,
+        );
+        await init.query(
+          `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname='balanced_journal') THEN CREATE CONSTRAINT TRIGGER balanced_journal AFTER INSERT ON postings DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION verify_journal_balance(); END IF; END $$`,
+        );
+        for (const table of ["postings", "journals"])
+          await init.query(
+            `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname='immutable_${table}') THEN CREATE TRIGGER immutable_${table} BEFORE UPDATE OR DELETE ON ${table} FOR EACH ROW EXECUTE FUNCTION deny_ledger_change(); END IF; END $$`,
+          );
+        await init.query("COMMIT");
+        initialized = true;
+      } catch (error) {
+        await init.query("ROLLBACK").catch(() => {});
+        throw error;
+      } finally {
+        init.release();
+        if (!initialized) await pool.end();
+      }
+    } else {
+      try {
+        const identity = (
+          await query.query(
             "SELECT value FROM public.paywella_ai_identity WHERE id='application'",
           )
         ).rows[0];
         if (identity?.value !== "paywella-ai-v1")
           throw new Error("This database belongs to a different application.");
+      } catch (error) {
+        await pool.end();
+        throw error;
       }
-      await init.query(schema);
-      const ownTables = [
-        ...schema.matchAll(/CREATE TABLE IF NOT EXISTS (\w+)/g),
-      ].map((match) => match[1]);
-      for (const table of ownTables) {
-        await init.query(`ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY`);
-        await init.query(`REVOKE ALL ON TABLE ${table} FROM PUBLIC`);
-        for (const role of ["anon", "authenticated"])
-          await init.query(
-            `DO $$ BEGIN IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='${role}') THEN REVOKE ALL ON TABLE ${table} FROM ${role}; END IF; END $$`,
-          );
-      }
-      await init.query(
-        `CREATE OR REPLACE FUNCTION deny_ledger_change() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'Append-only ledger'; END $$`,
-      );
-      await init.query(
-        `CREATE OR REPLACE FUNCTION verify_journal_balance() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF (SELECT COALESCE(SUM(amount),0) FROM postings WHERE journal=NEW.journal)<>0 THEN RAISE EXCEPTION 'Unbalanced journal'; END IF; RETURN NULL; END $$`,
-      );
-      await init.query(
-        `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname='balanced_journal') THEN CREATE CONSTRAINT TRIGGER balanced_journal AFTER INSERT ON postings DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION verify_journal_balance(); END IF; END $$`,
-      );
-      for (const table of ["postings", "journals"])
-        await init.query(
-          `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname='immutable_${table}') THEN CREATE TRIGGER immutable_${table} BEFORE UPDATE OR DELETE ON ${table} FOR EACH ROW EXECUTE FUNCTION deny_ledger_change(); END IF; END $$`,
-        );
-      await init.query("COMMIT");
-      initialized = true;
-    } catch (error) {
-      await init.query("ROLLBACK").catch(() => {});
-      throw error;
-    } finally {
-      init.release();
-      if (!initialized) await pool.end();
     }
     return {
       ...query,

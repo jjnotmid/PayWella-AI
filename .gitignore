@@ -15,3 +15,4 @@ private/
 *.xlsx
 *.pem
 *.key
+.vercel/

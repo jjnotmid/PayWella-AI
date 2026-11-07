@@ -12,5 +12,5 @@
     "skipLibCheck": true,
     "jsx": "react-jsx"
   },
-  "include": ["src", "scripts", "web", "tests", "vite.config.ts"]
+  "include": ["api", "src", "scripts", "web", "tests", "vite.config.ts"]
 }

@@ -2,7 +2,9 @@ import { openStore } from "./db.ts";
 import { Core } from "./core.ts";
 import { Agent } from "./ai/agent.ts";
 import { createModel } from "./ai/model.ts";
-import { createApp } from "./server.ts";
+import { createRequestHandler } from "./server.ts";
+import { createServer } from "node:http";
+import { BackgroundRunner } from "./background.ts";
 import { Worker } from "./worker.ts";
 import { runtimeConfig } from "./config.ts";
 const env = runtimeConfig(process.env);
@@ -14,14 +16,24 @@ const db = await openStore({
 const core = new Core(db),
   agent = new Agent(core, createModel(env), env.APP_SECRET!),
   worker = new Worker(core, agent, env),
-  server = createApp(core, agent, env);
-const timer = setInterval(() => {
-  worker.tick().catch(() => {
+  background = new BackgroundRunner(worker);
+function wake() {
+  return background.wake().catch(() => {
     process.stderr.write(
       "Background work could not complete; durable jobs remain queued.\n",
     );
   });
-}, 300);
+}
+const server = createServer(
+  createRequestHandler(core, agent, env, () => {
+    void wake();
+  }),
+);
+// Requests wake jobs immediately; this slow sweep recovers work after a restart.
+const timer = setInterval(() => {
+  void wake();
+}, 60000);
+void wake();
 const cleanup = setInterval(
   () =>
     core.cleanup().catch(() => {

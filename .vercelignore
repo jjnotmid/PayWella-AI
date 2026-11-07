@@ -1,0 +1,12 @@
+.git
+.data
+.env
+.env.*
+private
+tests
+coverage
+*.log
+*.docx
+*.pdf
+*.pptx
+*.xlsx

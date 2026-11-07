@@ -49,16 +49,21 @@ export class Worker {
     this.fetcher = fetcher;
   }
   async tick() {
-    if (this.stopping) return;
+    if (this.stopping) return 0;
+    const ready = await this.core.runnableJobKinds();
     const jobs: Promise<void>[] = [];
-    const lanes: [string, () => Promise<void>][] = [
-      ["payments", () => this.core.drain(2)],
-      ["agent:1", () => this.turn()],
-      ["agent:2", () => this.turn()],
-      ["outbox", () => this.outbound()],
-      ["receipts", () => this.receipt()],
-      ["welcome", () => this.welcome()],
+    const whatsapp = !!(
+      this.env.WHATSAPP_ACCESS_TOKEN && this.env.WHATSAPP_PHONE_NUMBER_ID
+    );
+    const lanes: [string, string, () => Promise<void>][] = [
+      ["payments", "task", () => this.core.drain(2)],
+      ["agent:1", "agent", () => this.turn()],
+      ["agent:2", "agent", () => this.turn()],
+      ["outbox", "outbox", () => this.outbound()],
+      ["receipts", "receipt", () => this.receipt()],
+      ["welcome", "welcome", () => this.welcome()],
       [
+        "schedules",
         "schedules",
         async () => {
           if (Date.now() - this.lastScheduleCheck < 30000) return;
@@ -67,8 +72,14 @@ export class Worker {
         },
       ],
     ];
-    for (const [name, run] of lanes)
-      if (!this.active.has(name)) {
+    for (const [name, kind, run] of lanes)
+      if (
+        !this.active.has(name) &&
+        (whatsapp || !["receipt", "welcome", "outbox"].includes(kind)) &&
+        (name === "schedules"
+          ? Date.now() - this.lastScheduleCheck >= 30000
+          : ready.has(kind))
+      ) {
         const work = run().finally(() => this.active.delete(name));
         this.active.set(name, work);
         jobs.push(work);
@@ -76,6 +87,7 @@ export class Worker {
     const result = await Promise.allSettled(jobs);
     if (result.some((item) => item.status === "rejected"))
       throw new AppError("WORKER_INTERRUPTED", 503);
+    return jobs.length;
   }
   async stop() {
     this.stopping = true;

@@ -44,6 +44,15 @@ function json(res: ServerResponse, value: unknown, status = 200) {
   res.end(JSON.stringify(value));
 }
 export function createApp(core: Core, agent: Agent, env: NodeJS.ProcessEnv) {
+  return createServer(createRequestHandler(core, agent, env));
+}
+
+export function createRequestHandler(
+  core: Core,
+  agent: Agent,
+  env: NodeJS.ProcessEnv,
+  scheduleWork?: () => void,
+) {
   const origin = new URL(env.PUBLIC_ORIGIN || "http://localhost:4317").origin,
     secureTransport = origin.startsWith("https:");
   const limits = new Map<string, { count: number; until: number }>();
@@ -79,8 +88,9 @@ export function createApp(core: Core, agent: Agent, env: NodeJS.ProcessEnv) {
     )
       throw new AppError("FORBIDDEN", 403);
   }
-  return createServer(async (req, res) => {
+  return async (req: IncomingMessage, res: ServerResponse) => {
     const rid = randomUUID();
+    let background = false;
     res.setHeader("cache-control", "no-store");
     res.setHeader("referrer-policy", "no-referrer");
     res.setHeader("x-content-type-options", "nosniff");
@@ -142,6 +152,7 @@ export function createApp(core: Core, agent: Agent, env: NodeJS.ProcessEnv) {
           )
         )
           throw new AppError("FORBIDDEN", 403);
+        background = true;
         const payload = JSON.parse(raw.toString());
         for (const entry of payload.entry || []) {
           if (entry.id !== env.WHATSAPP_BUSINESS_ID) continue;
@@ -248,6 +259,12 @@ export function createApp(core: Core, agent: Agent, env: NodeJS.ProcessEnv) {
       if (path.startsWith("/api/")) {
         const authenticated =
           path === "/api/exchange" ? null : await session(req);
+        background =
+          !!authenticated &&
+          (method === "POST" ||
+            path === "/api/workspace" ||
+            path.startsWith("/api/assistant/") ||
+            /^\/api\/plans\/[a-f0-9-]{36}$/.test(path));
         const key = authenticated
             ? "owner:" + authenticated.owner
             : "entry:" + (req.socket.remoteAddress || "local"),
@@ -752,6 +769,11 @@ export function createApp(core: Core, agent: Agent, env: NodeJS.ProcessEnv) {
       };
       res.writeHead(200, {
         "content-type": mime[extname(file)] || "application/octet-stream",
+        "cache-control": /^\/assets\/[\w.-]+-[\w-]{8,}\.(js|css)$/.test(path)
+          ? "public, max-age=31536000, immutable"
+          : /\.(woff2?|ttf|png|svg)$/.test(path)
+            ? "public, max-age=86400"
+            : "no-store",
       });
       res.end(content);
     } catch (error) {
@@ -776,6 +798,9 @@ export function createApp(core: Core, agent: Agent, env: NodeJS.ProcessEnv) {
         { error: code, message: errorCopy(code), requestId: rid },
         status,
       );
+    } finally {
+      if (background && res.statusCode >= 200 && res.statusCode < 300)
+        scheduleWork?.();
     }
-  });
+  };
 }

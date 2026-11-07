@@ -16,3 +16,5 @@ These model terms do not relicense the original application code. Hosted inferen
 ## Libraries and assets
 
 The dependency lockfile records library versions; each dependency retains its own licence. Bundled font licences, icon attribution and the separate PayWella brand asset are documented in [ASSETS.md](ASSETS.md).
+
+The serverless deployment uses [ffmpeg-static](https://github.com/eugeneware/ffmpeg-static) to run FFmpeg as a separate executable for media decoding. The package and bundled executable retain their own licences, including the distributed FFmpeg licence and source notices. FFmpeg source and build information are available through the package's upstream release links; the application's MIT licence does not replace those terms.

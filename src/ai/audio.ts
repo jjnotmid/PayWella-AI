@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { AppError } from "../contracts.ts";
 import type { Media } from "./media.ts";
+import ffmpeg from "ffmpeg-static";
 
 export function toSpeechWav(media: Media): Promise<Buffer> {
   return new Promise((resolve, reject) => {
@@ -26,7 +27,7 @@ export function toSpeechWav(media: Media): Promise<Buffer> {
       "wav",
       "pipe:1",
     ];
-    const child = spawn("ffmpeg", args, {
+    const child = spawn(typeof ffmpeg === "string" ? ffmpeg : "ffmpeg", args, {
       stdio: ["pipe", "pipe", "ignore"],
       timeout: 10000,
     });

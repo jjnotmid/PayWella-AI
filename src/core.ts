@@ -37,6 +37,9 @@ import {
   namedGoalId,
 } from "./savings-schedules.ts";
 
+const runnableJobs =
+  "((status='QUEUED' AND (lease_until IS NULL OR lease_until<=$1)) OR (status='RUNNING' AND lease_until<=$1)) AND NOT EXISTS (SELECT 1 FROM jobs active WHERE active.owner=jobs.owner AND active.kind=jobs.kind AND active.kind<>'task' AND active.id<>jobs.id AND active.status='RUNNING' AND active.lease_until>$1) AND (jobs.kind<>'task' OR NOT EXISTS (SELECT 1 FROM task_dependencies edge JOIN tasks prerequisite ON prerequisite.id=edge.dependency WHERE edge.task=jobs.id AND prerequisite.status NOT IN ('SETTLED','FAILED','NOT_STARTED','CANCELLED')))";
+
 export class Core {
   db: Store;
   rail: Rail;
@@ -224,7 +227,9 @@ export class Core {
       user,
       beneficiaries,
       schedules,
-      organizerApplications: organizerApplications.map(({ sealed, ...application }) => application),
+      organizerApplications: organizerApplications.map(
+        ({ sealed, ...application }) => application,
+      ),
       savingsRuns: savingsRuns
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
         .slice(0, 20),
@@ -440,12 +445,17 @@ export class Core {
     }
     const { tasks } = PlanInput.parse(input),
       user = await this.getUser(owner);
-    for (const task of tasks) if (task.kind === "bank_transfer") {
-      const supplied = task.bankCode.trim().toLowerCase();
-      const bank = banks.find(bank => bank.code.toLowerCase() === supplied || bank.name.toLowerCase() === supplied);
-      if (!bank) throw new AppError("INVALID_RECIPIENT");
-      task.bankCode = bank.code;
-    }
+    for (const task of tasks)
+      if (task.kind === "bank_transfer") {
+        const supplied = task.bankCode.trim().toLowerCase();
+        const bank = banks.find(
+          (bank) =>
+            bank.code.toLowerCase() === supplied ||
+            bank.name.toLowerCase() === supplied,
+        );
+        if (!bank) throw new AppError("INVALID_RECIPIENT");
+        task.bankCode = bank.code;
+      }
     if (!user.ready) throw new AppError("SETUP_REQUIRED");
     const id = edit?.id || randomUUID(),
       quoted: QuotedTask[] = [],
@@ -1215,11 +1225,29 @@ export class Core {
   async receipt(owner: string, id: string) {
     return this.owned(this.db, owner, id, "receipt");
   }
+  async runnableJobKinds(): Promise<Set<string>> {
+    const result = await this.db.query(
+      "SELECT DISTINCT kind FROM jobs WHERE " + runnableJobs,
+      [stamp()],
+    );
+    return new Set(result.rows.map((row) => row.kind));
+  }
+  async nextJobRetry(): Promise<number | null> {
+    const row = (
+      await this.db.query(
+        "SELECT MIN(lease_until) AS due FROM jobs WHERE status='QUEUED' AND lease_until>$1",
+        [stamp()],
+      )
+    ).rows[0];
+    return row?.due ? Date.parse(row.due) : null;
+  }
   async claim(kind = "task"): Promise<Row | null> {
     return this.db.transaction(async (q) => {
       const row = (
         await q.query(
-          "SELECT * FROM jobs WHERE kind=$2 AND ((status='QUEUED' AND (lease_until IS NULL OR lease_until<=$1)) OR (status='RUNNING' AND lease_until<=$1)) AND NOT EXISTS (SELECT 1 FROM jobs active WHERE active.owner=jobs.owner AND active.kind=jobs.kind AND active.kind<>'task' AND active.id<>jobs.id AND active.status='RUNNING' AND active.lease_until>$1) AND (jobs.kind<>'task' OR NOT EXISTS (SELECT 1 FROM task_dependencies edge JOIN tasks prerequisite ON prerequisite.id=edge.dependency WHERE edge.task=jobs.id AND prerequisite.status NOT IN ('SETTLED','FAILED','NOT_STARTED','CANCELLED'))) ORDER BY created_at LIMIT 1" +
+          "SELECT * FROM jobs WHERE kind=$2 AND " +
+            runnableJobs +
+            " ORDER BY created_at LIMIT 1" +
             (this.db.postgres ? " FOR UPDATE SKIP LOCKED" : ""),
           [stamp(), kind],
         )
